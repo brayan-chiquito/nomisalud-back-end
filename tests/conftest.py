@@ -5,9 +5,10 @@ El conftest raíz sobreescribe la dependencia de base de datos para que
 los tests de la capa HTTP corran sin necesitar una instancia real de PostgreSQL.
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import AsyncMock
 
 from app.core.database import get_db
 from app.main import app

@@ -1,8 +1,8 @@
 """Tests del endpoint /api/v1/health."""
 
-import pytest
-from httpx import AsyncClient
 from unittest.mock import AsyncMock, MagicMock
+
+from httpx import AsyncClient
 
 
 class TestHealthCheck:
@@ -36,9 +36,7 @@ class TestHealthCheckDb:
         assert body["database"] == "conectada"
         mock_db.execute.assert_called_once()
 
-    async def test_uses_db_dependency(
-        self, client: AsyncClient, mock_db: AsyncMock
-    ):
+    async def test_uses_db_dependency(self, client: AsyncClient, mock_db: AsyncMock):
         mock_result = MagicMock()
         mock_result.scalar.return_value = 1
         mock_db.execute.return_value = mock_result
