@@ -33,3 +33,6 @@ alembic/versions/__pycache__/
 
 # Docker
 *.log
+
+# cursor
+.cursor/
