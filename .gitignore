@@ -36,3 +36,6 @@ alembic/versions/__pycache__/
 
 # cursor
 .cursor/
+
+#docs
+docs/
