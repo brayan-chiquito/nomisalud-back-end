@@ -1,7 +1,5 @@
 """Tests unitarios para app/core/security.py."""
 
-import pytest
-
 from app.core.security import hash_password, verify_password
 
 
