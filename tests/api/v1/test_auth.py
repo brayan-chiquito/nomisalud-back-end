@@ -3,7 +3,6 @@
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from httpx import AsyncClient
 
 from app.models.user import UserRole
@@ -96,7 +95,9 @@ class TestLoginSuccess:
 
         settings = get_settings()
         token = response.json()["access_token"]
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
 
         assert payload["user_id"] == str(mock_user.id)
         assert payload["role"] == mock_user.role.value
