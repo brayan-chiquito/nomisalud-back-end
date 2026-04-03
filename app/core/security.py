@@ -20,9 +20,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(user_id: uuid.UUID, role: str, email: str) -> str:
     """Genera y firma un JWT con los campos requeridos: user_id, role y email."""
     settings = get_settings()
-    expire = datetime.now(UTC) + timedelta(
-        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-    )
+    expire = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "user_id": str(user_id),
         "role": role,
