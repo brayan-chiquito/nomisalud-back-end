@@ -1,18 +1,18 @@
+import asyncio
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+
 from alembic import context
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 from app.core.database import Base
 
-# Importar todos los modelos aquí para que Alembic los detecte en autogenerate
-# Ejemplo: from app.models.user import User  # noqa: F401
+# Importar todos los modelos para que Alembic los detecte en autogenerate
+from app.models.user import User  # noqa: F401
 
 config = context.config
 settings = get_settings()
-
-# Sobreescribir la URL con la configuración de la aplicación
-config.set_main_option("sqlalchemy.url", settings.database_url_sync)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -21,9 +21,9 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    """Genera el SQL sin conexión real a la BD."""
     context.configure(
-        url=url,
+        url=settings.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -32,22 +32,24 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+def do_run_migrations(connection) -> None:  # type: ignore[no-untyped-def]
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_migrations_online() -> None:
+    """Ejecuta las migraciones usando el motor asíncrono (asyncpg)."""
+    # NullPool evita que Alembic mantenga conexiones abiertas entre revisiones
+    connectable = create_async_engine(settings.database_url, poolclass=NullPool)
+
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+
+    await connectable.dispose()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    run_migrations_online()
+    asyncio.run(run_migrations_online())
