@@ -58,9 +58,7 @@ class TestPersistIncapacidadAttachment:
             headers={"content-type": "application/pdf"},
         )
         with pytest.raises(IncapacidadStorageError, match="vacío"):
-            await persist_incapacidad_attachment(
-                up, base_dir=tmp_path, max_bytes=1024
-            )
+            await persist_incapacidad_attachment(up, base_dir=tmp_path, max_bytes=1024)
 
     async def test_rechaza_si_supera_maximo(self, tmp_path):
         up = UploadFile(
@@ -69,9 +67,7 @@ class TestPersistIncapacidadAttachment:
             headers={"content-type": "application/pdf"},
         )
         with pytest.raises(IncapacidadStorageError, match="tamaño máximo"):
-            await persist_incapacidad_attachment(
-                up, base_dir=tmp_path, max_bytes=100
-            )
+            await persist_incapacidad_attachment(up, base_dir=tmp_path, max_bytes=100)
 
 
 def test_radicado_candidato_longitud_y_prefijo():

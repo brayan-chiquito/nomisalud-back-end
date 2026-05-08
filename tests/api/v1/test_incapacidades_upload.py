@@ -102,9 +102,7 @@ class TestIncapacidadUploadAuthz:
         # HTTPBearer de Starlette usa 403 cuando falta Authorization.
         assert response.status_code in (401, 403)
 
-    async def test_403_colaborador_no_puede_cargar_para_otro(
-        self, client: AsyncClient
-    ):
+    async def test_403_colaborador_no_puede_cargar_para_otro(self, client: AsyncClient):
         token, _ = _token(UserRole.COLABORADOR)
         otro = uuid.uuid4()
 
@@ -122,9 +120,7 @@ class TestIncapacidadUploadAuthz:
         )
         assert response.status_code == 403
 
-    async def test_201_rrhh_puede_indicar_otro_colaborador(
-        self, client: AsyncClient
-    ):
+    async def test_201_rrhh_puede_indicar_otro_colaborador(self, client: AsyncClient):
         token, _ = _token(UserRole.AUXILIAR_RRHH)
         colab = uuid.uuid4()
         row = MagicMock(spec=Incapacidad)
@@ -174,9 +170,7 @@ class TestIncapacidadUploadValidation:
         )
         assert response.status_code == 422
 
-    async def test_404_colaborador_inexistente_en_servicio(
-        self, client: AsyncClient
-    ):
+    async def test_404_colaborador_inexistente_en_servicio(self, client: AsyncClient):
         token, _ = _token(UserRole.ADMIN)
 
         with patch(
