@@ -1,15 +1,20 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
 
 # Importar todos los modelos para que Alembic los detecte en autogenerate
-from app.models.user import User  # noqa: F401
+from app.models import (  # noqa: F401
+    ExtraccionIA,
+    HistorialEstado,
+    Incapacidad,
+    User,
+)
 
 config = context.config
 settings = get_settings()

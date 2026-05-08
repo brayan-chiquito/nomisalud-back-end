@@ -16,28 +16,56 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.core.security import hash_password
-from app.models.user import User, UserRole
+from app.models.user import TipoDocumento, User, UserRole
 
 SEED_USERS: list[dict] = [
     {
         "email": "colaborador@nomisalud.com",
         "password": "Colaborador123!",
         "role": UserRole.COLABORADOR,
+        "nombre_completo": "María Colaboradora Demo",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000001",
+        "area": "Operaciones",
+        "cargo": "Colaborador",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
     },
     {
         "email": "auxiliar.rrhh@nomisalud.com",
         "password": "AuxiliarRRHH123!",
         "role": UserRole.AUXILIAR_RRHH,
+        "nombre_completo": "Carlos Auxiliar RRHH",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000002",
+        "area": "Recursos Humanos",
+        "cargo": "Auxiliar RRHH",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
     },
     {
         "email": "coordinador.rrhh@nomisalud.com",
         "password": "CoordinadorRRHH123!",
         "role": UserRole.COORDINADOR_RRHH,
+        "nombre_completo": "Ana Coordinadora RRHH",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000003",
+        "area": "Recursos Humanos",
+        "cargo": "Coordinador RRHH",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
     },
     {
         "email": "admin@nomisalud.com",
         "password": "Admin123!",
         "role": UserRole.ADMIN,
+        "nombre_completo": "Admin Sistema",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000004",
+        "area": "Tecnología",
+        "cargo": "Administrador",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
     },
 ]
 
@@ -52,13 +80,21 @@ async def seed() -> None:
             existing = result.scalar_one_or_none()
 
             if existing:
-                print(f"[SKIP]   {data['email']} ya existe (role={existing.role.value})")
+                role = existing.role.value
+                print(f"[SKIP]   {data['email']} ya existe (role={role})")
                 continue
 
             user = User(
                 email=data["email"],
                 password_hash=hash_password(data["password"]),
                 role=data["role"],
+                nombre_completo=data["nombre_completo"],
+                tipo_documento=data["tipo_documento"],
+                numero_documento=data["numero_documento"],
+                area=data["area"],
+                cargo=data["cargo"],
+                eps_afiliacion=data["eps_afiliacion"],
+                arl_afiliacion=data["arl_afiliacion"],
             )
             session.add(user)
             print(f"[INSERT] {data['email']} (role={data['role'].value})")

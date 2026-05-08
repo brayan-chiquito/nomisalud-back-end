@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
+    # Carga de incapacidades (multipart)
+    UPLOAD_STORAGE_DIR: str = "var/uploads"
+    MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024  # 10 MiB
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
