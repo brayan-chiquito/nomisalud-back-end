@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,9 +13,8 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestiona el ciclo de vida de la aplicación (startup / shutdown)."""
-    # Startup
+    Path(settings.UPLOAD_STORAGE_DIR).mkdir(parents=True, exist_ok=True)
     yield
-    # Shutdown
 
 
 def create_application() -> FastAPI:

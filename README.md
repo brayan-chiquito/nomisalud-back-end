@@ -30,10 +30,56 @@ docker compose up --build
 
 ## Endpoints disponibles
 
-| Método | Ruta                  | Descripción                     |
-|--------|-----------------------|---------------------------------|
-| GET    | `/api/v1/health/`     | Hola Mundo / estado de la API   |
-| GET    | `/api/v1/health/db`   | Verifica conexión a PostgreSQL  |
+| Método | Ruta                           | Descripción |
+|--------|--------------------------------|-------------|
+| GET    | `/api/v1/health/`              | Estado básico de la API |
+| GET    | `/api/v1/health/db`            | Verifica conexión a PostgreSQL |
+| POST   | `/api/v1/auth/login`           | Autenticación (retorna JWT) |
+| POST   | `/api/v1/incapacidades/upload` | Carga multipart (archivo) y crea trámite |
+| GET    | `/api/v1/demo/me`              | [DEMO] Payload del JWT decodificado |
+| GET    | `/api/v1/demo/colaborador`     | [DEMO] Acceso por cualquier rol |
+| GET    | `/api/v1/demo/rrhh`            | [DEMO] Acceso RRHH/admin |
+| GET    | `/api/v1/demo/admin`           | [DEMO] Acceso solo admin |
+
+### Ejemplos `curl`
+
+#### Health
+
+```bash
+curl -s http://localhost:8000/api/v1/health/
+curl -s http://localhost:8000/api/v1/health/db
+```
+
+#### Login (obtener JWT)
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@nomisalud.com","password":"Admin123!"}'
+```
+
+#### Upload de incapacidad (multipart)
+
+Guarda el token y úsalo en el `Authorization: Bearer ...`.
+
+```bash
+TOKEN="PEGA_AQUI_EL_ACCESS_TOKEN"
+
+curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "archivo=@./mi_incapacidad.pdf;type=application/pdf"
+```
+
+Si RRHH/admin carga para un colaborador específico:
+
+```bash
+COLABORADOR_ID="00000000-0000-0000-0000-000000000000"
+
+curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "colaborador_id=$COLABORADOR_ID" \
+  -F "archivo=@./mi_incapacidad.png;type=image/png"
+```
 
 ---
 
