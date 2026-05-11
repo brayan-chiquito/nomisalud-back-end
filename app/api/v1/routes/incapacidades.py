@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -17,9 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import require_roles
+from app.models.historial_estado import HistorialEstado
+from app.models.incapacidad import IncapacidadEstado
 from app.models.user import UserRole
 from app.schemas.incapacidad import IncapacidadUploadResponse
 from app.schemas.token import TokenPayload
+from app.services.incapacidad_extraction_jobs import run_incapacidad_extraction_job
 from app.services.incapacidad_storage import IncapacidadStorageError
 from app.services.incapacidad_upload_service import register_incapacidad_upload
 
@@ -54,12 +58,14 @@ def _ensure_puede_cargar_para_colaborador(
     summary="Carga de documento de incapacidad (multipart)",
     description=(
         "Recibe un archivo (PDF, JPG o PNG), lo guarda en disco y crea el registro "
-        "en `incapacidades` con estado inicial `recibida`. "
-        "Opcionalmente `colaborador_id` indica el titular del trámite; "
+        "en `incapacidades`. La respuesta es inmediata con el radicado; el estado "
+        "pasa a `procesando_ia` y la extracción con Gemini se ejecuta en segundo plano."
+        " Opcionalmente `colaborador_id` indica el titular del trámite; "
         "si se omite, se asume el usuario autenticado."
     ),
 )
 async def upload_incapacidad_documento(
+    background_tasks: BackgroundTasks,
     archivo: UploadFile = File(..., description="Archivo PDF, JPG/JPEG o PNG"),
     colaborador_id: str | None = Form(
         None,
@@ -126,6 +132,25 @@ async def upload_incapacidad_documento(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudo escribir el archivo en el almacenamiento.",
         ) from exc
+
+    prev_estado = row.estado
+    row.estado = IncapacidadEstado.PROCESANDO_IA
+    db.add(
+        HistorialEstado(
+            incapacidad_id=row.id,
+            estado_anterior=prev_estado,
+            estado_nuevo=IncapacidadEstado.PROCESANDO_IA,
+            user_id=cargado_por_uuid,
+            observacion="Documento recibido; extracción IA en cola.",
+        )
+    )
+    if row.archivo_path:
+        background_tasks.add_task(
+            run_incapacidad_extraction_job,
+            row.id,
+            row.archivo_path,
+            cargado_por_uuid,
+        )
 
     return IncapacidadUploadResponse(
         radicado=row.radicado,

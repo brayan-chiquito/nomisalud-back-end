@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,6 +46,7 @@ class ExtraccionIA(Base):
         nullable=True,
     )
     validaciones: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_usada: Mapped[str | None] = mapped_column(String(50), nullable=True)
     modelo: Mapped[str | None] = mapped_column(String(80), nullable=True)
     tokens_input: Mapped[int | None] = mapped_column(Integer, nullable=True)

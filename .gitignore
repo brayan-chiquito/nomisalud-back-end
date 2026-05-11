@@ -39,3 +39,6 @@ alembic/versions/__pycache__/
 
 #docs
 docs/
+
+# uploads
+uploads/

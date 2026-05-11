@@ -24,16 +24,25 @@ def _token(role: UserRole, user_id: uuid.UUID | None = None) -> str:
 
 @pytest.mark.asyncio
 class TestIncapacidadUploadSuccess:
-    async def test_201_radicado_y_estado_recibida(self, client: AsyncClient):
+    async def test_201_radicado_y_estado_procesando_ia(self, client: AsyncClient):
         token, uid = _token(UserRole.COLABORADOR)
+        iid = uuid.uuid4()
         row = MagicMock(spec=Incapacidad)
+        row.id = iid
         row.radicado = "IN0123456789ABCDEF0"
         row.estado = IncapacidadEstado.RECIBIDA
+        row.archivo_path = "/tmp/test/doc.pdf"
+        row.cargado_por = uid
 
-        with patch(
-            "app.api.v1.routes.incapacidades.register_incapacidad_upload",
-            new_callable=AsyncMock,
-            return_value=row,
+        with (
+            patch(
+                "app.api.v1.routes.incapacidades.register_incapacidad_upload",
+                new_callable=AsyncMock,
+                return_value=row,
+            ),
+            patch(
+                "app.api.v1.routes.incapacidades.run_incapacidad_extraction_job",
+            ) as job,
         ):
             response = await client.post(
                 "/api/v1/incapacidades/upload",
@@ -51,8 +60,9 @@ class TestIncapacidadUploadSuccess:
         body = response.json()
         assert body == {
             "radicado": "IN0123456789ABCDEF0",
-            "estado": "recibida",
+            "estado": "procesando_ia",
         }
+        job.assert_called_once_with(iid, "/tmp/test/doc.pdf", uid)
 
     async def test_colaborador_id_por_defecto_es_el_del_token(
         self, client: AsyncClient, mock_db: AsyncMock
@@ -63,13 +73,21 @@ class TestIncapacidadUploadSuccess:
         async def capture(*_args, **kwargs):
             captured["colaborador_id"] = kwargs["colaborador_id"]
             row = MagicMock(spec=Incapacidad)
+            row.id = uuid.uuid4()
             row.radicado = "IN00000000000000001"
             row.estado = IncapacidadEstado.RECIBIDA
+            row.archivo_path = "/x/a.pdf"
+            row.cargado_por = uid
             return row
 
-        with patch(
-            "app.api.v1.routes.incapacidades.register_incapacidad_upload",
-            side_effect=capture,
+        with (
+            patch(
+                "app.api.v1.routes.incapacidades.register_incapacidad_upload",
+                side_effect=capture,
+            ),
+            patch(
+                "app.api.v1.routes.incapacidades.run_incapacidad_extraction_job",
+            ),
         ):
             await client.post(
                 "/api/v1/incapacidades/upload",
@@ -121,17 +139,25 @@ class TestIncapacidadUploadAuthz:
         assert response.status_code == 403
 
     async def test_201_rrhh_puede_indicar_otro_colaborador(self, client: AsyncClient):
-        token, _ = _token(UserRole.AUXILIAR_RRHH)
+        token, cargador = _token(UserRole.AUXILIAR_RRHH)
         colab = uuid.uuid4()
         row = MagicMock(spec=Incapacidad)
+        row.id = uuid.uuid4()
         row.radicado = "INAAAAAAAAAAAAAAAA"
         row.estado = IncapacidadEstado.RECIBIDA
+        row.archivo_path = "/x/b.pdf"
+        row.cargado_por = cargador
 
-        with patch(
-            "app.api.v1.routes.incapacidades.register_incapacidad_upload",
-            new_callable=AsyncMock,
-            return_value=row,
-        ) as reg:
+        with (
+            patch(
+                "app.api.v1.routes.incapacidades.register_incapacidad_upload",
+                new_callable=AsyncMock,
+                return_value=row,
+            ) as reg,
+            patch(
+                "app.api.v1.routes.incapacidades.run_incapacidad_extraction_job",
+            ),
+        ):
             response = await client.post(
                 "/api/v1/incapacidades/upload",
                 headers={"Authorization": f"Bearer {token}"},

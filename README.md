@@ -14,7 +14,7 @@ API REST construida con **FastAPI**, **PostgreSQL** (async con SQLAlchemy) y **D
 ## Levantar el proyecto con Docker
 
 ```bash
-# 1. Copiar variables de entorno
+# 1. Copiar variables de entorno y ajustar valores (incl. GEMINI_API_KEY si quieres extracción IA real)
 cp .env.example .env
 
 # 2. Construir y levantar los contenedores
@@ -30,16 +30,50 @@ docker compose up --build
 
 ## Endpoints disponibles
 
-| Método | Ruta                           | Descripción |
-|--------|--------------------------------|-------------|
-| GET    | `/api/v1/health/`              | Estado básico de la API |
-| GET    | `/api/v1/health/db`            | Verifica conexión a PostgreSQL |
-| POST   | `/api/v1/auth/login`           | Autenticación (retorna JWT) |
-| POST   | `/api/v1/incapacidades/upload` | Carga multipart (archivo) y crea trámite |
-| GET    | `/api/v1/demo/me`              | [DEMO] Payload del JWT decodificado |
-| GET    | `/api/v1/demo/colaborador`     | [DEMO] Acceso por cualquier rol |
-| GET    | `/api/v1/demo/rrhh`            | [DEMO] Acceso RRHH/admin |
-| GET    | `/api/v1/demo/admin`           | [DEMO] Acceso solo admin |
+| Método | Ruta                           | Auth | Descripción |
+|--------|--------------------------------|------|-------------|
+| GET    | `/api/v1/health/`              | No   | Estado básico de la API |
+| GET    | `/api/v1/health/db`            | No   | Verifica conexión a PostgreSQL |
+| POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
+| POST   | `/api/v1/incapacidades/upload` | Sí   | Carga PDF/JPG/PNG, crea trámite y encola extracción IA (Gemini 2.5 Flash) |
+| GET    | `/api/v1/demo/me`              | Sí   | [DEMO] Payload del JWT decodificado |
+| GET    | `/api/v1/demo/colaborador`     | Sí   | [DEMO] Acceso por cualquier rol |
+| GET    | `/api/v1/demo/rrhh`            | Sí   | [DEMO] Acceso RRHH/admin |
+| GET    | `/api/v1/demo/admin`           | Sí   | [DEMO] Acceso solo admin |
+
+La lista canónica de rutas, esquemas y códigos HTTP está en **Swagger** (`/docs`) y **ReDoc** (`/redoc`).
+
+### Respuesta `POST /api/v1/incapacidades/upload`
+
+Cuerpo JSON (201 Created):
+
+```json
+{
+  "radicado": "IN0123456789ABCDEF0",
+  "estado": "procesando_ia"
+}
+```
+
+- **`radicado`**: identificador único del trámite (máx. 20 caracteres).
+- **`estado`**: al cerrar la petición el trámite queda en **`procesando_ia`**. La API **no espera** a Gemini: la extracción corre en **segundo plano** (`BackgroundTasks`).
+- Tras un extracción **correcta**, el estado pasa a **`en_verificacion`** y se crea la fila en **`extraccion_ia`** (`datos_extraidos`, `validaciones`, `raw_response`, modelo, etc.).
+- Si la extracción **falla** (archivo, API, JSON inválido…), el estado suele quedar en **`doc_incompleta`** con detalle en `documentacion_faltante`.
+
+Roles permitidos en upload: `colaborador`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin`. Un colaborador solo puede cargar para sí mismo salvo que RRHH/admin indiquen `colaborador_id` en el formulario.
+
+### Extracción IA (configuración)
+
+El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. Variables relevantes (ver **`.env.example`**):
+
+| Variable | Uso |
+|----------|-----|
+| `GEMINI_API_KEY` | Obligatoria para que la tarea en segundo plano llame a Google AI |
+| `GEMINI_MODEL` | Valor por defecto en settings; el código de extracción usa fijo **`gemini-2.5-flash`** |
+| `GEMINI_EXTRACTION_MAX_ATTEMPTS` | Reintentos ante 429 / 5xx / red |
+| `GEMINI_EXTRACTION_BACKOFF_BASE_SECONDS` | Backoff exponencial entre reintentos |
+| `GEMINI_HTTP_TIMEOUT_SECONDS` | Timeout HTTP hacia la API de Gemini |
+
+Sin `GEMINI_API_KEY`, el archivo se guarda y el trámite puede quedar en flujo de error de extracción al ejecutarse el job.
 
 ### Ejemplos `curl`
 
@@ -70,6 +104,8 @@ curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
   -F "archivo=@./mi_incapacidad.pdf;type=application/pdf"
 ```
 
+Respuesta típica: `{"radicado":"IN…","estado":"procesando_ia"}`. Consulta el trámite en base de datos (o un futuro endpoint de detalle) para ver `en_verificacion` / `doc_incompleta` cuando termine el job.
+
 Si RRHH/admin carga para un colaborador específico:
 
 ```bash
@@ -80,6 +116,7 @@ curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
   -F "colaborador_id=$COLABORADOR_ID" \
   -F "archivo=@./mi_incapacidad.png;type=image/png"
 ```
+
 
 ---
 
@@ -92,25 +129,37 @@ nomisalud-back-end/
 │   ├── core/
 │   │   ├── config.py         # Configuración (pydantic-settings)
 │   │   ├── database.py       # Engine async y sesión de BD
-│   │   └── security.py       # Hash y verificación de contraseñas (bcrypt)
+│   │   ├── dependencies.py   # JWT y dependencias de rutas
+│   │   └── security.py       # JWT, hash de contraseñas (bcrypt)
 │   ├── api/
 │   │   └── v1/
 │   │       ├── router.py     # Agrupador de rutas v1
 │   │       └── routes/
-│   │           └── health.py # Endpoints de health check
+│   │           ├── auth.py
+│   │           ├── demo.py
+│   │           ├── health.py
+│   │           └── incapacidades.py  # POST upload + BackgroundTasks
 │   ├── models/
-│   │   └── user.py           # Modelo User + enum UserRole
+│   │   ├── user.py
+│   │   ├── incapacidad.py
+│   │   ├── extraccion_ia.py  # Resultado IA (JSONB + raw_response)
+│   │   └── historial_estado.py
+│   ├── prompts/
+│   │   └── Nomisalud_prompt_extraccion.md  # Prompt Gemini (versionado en git)
 │   ├── schemas/              # Esquemas Pydantic (DTOs)
-│   ├── services/             # Lógica de negocio
-│   └── repositories/         # Capa de acceso a datos
+│   ├── services/
+│   │   ├── ai_extractor.py           # Llamada REST Gemini + normalización JSON
+│   │   ├── incapacidad_extraction_jobs.py  # Job post-upload (BD + extracción)
+│   │   ├── incapacidad_storage.py
+│   │   └── incapacidad_upload_service.py
+│   └── repositories/
 ├── alembic/                  # Migraciones de base de datos
-│   └── versions/
-│       └── 3f8a9c12b4e7_create_users_table.py
+│   └── versions/             # users, dominio incapacidades, extraccion_ia, raw_response, …
 ├── scripts/
 │   └── seed.py               # Seed de usuarios de prueba
-├── tests/                    # Pruebas unitarias e integración
-├── .env                      # Variables de entorno (no subir a git)
-├── .env.example              # Plantilla de variables de entorno
+├── tests/
+├── .env
+├── .env.example
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt
@@ -119,6 +168,8 @@ nomisalud-back-end/
 ---
 
 ## Migraciones con Alembic
+
+El historial incluye dominio de usuarios, **incapacidades**, **extraccion_ia** (incl. columna **`raw_response`**), **historial_estados**, etc. Tras clonar o actualizar código, ejecuta siempre `upgrade head` antes de probar uploads con IA.
 
 ```bash
 # Aplicar todas las migraciones pendientes
@@ -205,6 +256,7 @@ docker compose exec db psql -U nomisalud -d nomisalud_db
 # Comandos útiles dentro de psql:
 \dt                            -- listar tablas
 \d users                       -- estructura de la tabla users
+\d extraccion_ia               -- extracción IA vinculada a incapacidades (1:1)
 SELECT * FROM users;           -- ver registros
 SELECT * FROM alembic_version; -- ver migraciones aplicadas
 \q                             -- salir
