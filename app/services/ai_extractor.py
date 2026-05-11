@@ -15,7 +15,6 @@ import asyncio
 import base64
 import json
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -104,17 +103,36 @@ def normalize_extraccion_json(data: Any) -> dict[str, Any | None]:
     Garantiza las claves raíz requeridas; valores ausentes o tipos inesperados → null.
     """
     if not isinstance(data, dict):
-        return {k: None for k in _ROOT_KEYS}
+        return dict.fromkeys(_ROOT_KEYS, None)
     return {k: data.get(k) for k in _ROOT_KEYS}
 
 
 def _strip_json_fences(text: str) -> str:
-    t = text.strip()
-    if not t.startswith("```"):
-        return t
-    t = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", t)
-    t = re.sub(r"\s*```$", "", t)
-    return t.strip()
+    """
+    Quita fences tipo markdown sin regex ambiguos (evita ReDoS, Sonar S5852).
+    """
+    raw = text.strip()
+    if not raw.startswith("```"):
+        return raw
+    body = raw[3:]
+    i = 0
+    while (
+        i < len(body)
+        and body[i]
+        in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+    ):
+        i += 1
+    while i < len(body) and body[i] in " \t":
+        i += 1
+    if i < len(body) and body[i] == "\r":
+        i += 1
+    if i < len(body) and body[i] == "\n":
+        i += 1
+    body = body[i:]
+    body = body.rstrip()
+    if body.endswith("```"):
+        body = body[:-3].rstrip()
+    return body
 
 
 def _extract_model_text(payload: dict[str, Any]) -> str:
@@ -138,6 +156,23 @@ def _should_retry_status(status_code: int) -> bool:
 async def _sleep_backoff(base_seconds: float, attempt_index: int) -> None:
     delay = base_seconds * (2**attempt_index)
     await asyncio.sleep(delay)
+
+
+def _local_extraction_from_gemini_payload(
+    payload: dict[str, Any],
+) -> LocalExtractionResult:
+    raw_response = _extract_model_text(payload)
+    to_parse = _strip_json_fences(raw_response.strip())
+    try:
+        parsed = json.loads(to_parse)
+    except json.JSONDecodeError as exc:
+        raise GeminiExtractionError(
+            "La respuesta del modelo no es JSON válido."
+        ) from exc
+    return LocalExtractionResult(
+        normalized=normalize_extraccion_json(parsed),
+        raw_response=raw_response,
+    )
 
 
 async def extract_from_local_file(
@@ -186,38 +221,6 @@ async def extract_from_local_file(
         for attempt in range(cfg.GEMINI_EXTRACTION_MAX_ATTEMPTS):
             try:
                 resp = await client.post(url, params=params, json=body)
-                if resp.status_code == 200:
-                    payload = resp.json()
-                    raw_response = _extract_model_text(payload)
-                    to_parse = _strip_json_fences(raw_response.strip())
-                    try:
-                        parsed = json.loads(to_parse)
-                    except json.JSONDecodeError as exc:
-                        raise GeminiExtractionError(
-                            "La respuesta del modelo no es JSON válido."
-                        ) from exc
-                    return LocalExtractionResult(
-                        normalized=normalize_extraccion_json(parsed),
-                        raw_response=raw_response,
-                    )
-
-                if _should_retry_status(resp.status_code) and attempt + 1 < (
-                    cfg.GEMINI_EXTRACTION_MAX_ATTEMPTS
-                ):
-                    logger.warning(
-                        "Gemini HTTP %s (intento %s/%s). Reintentando…",
-                        resp.status_code,
-                        attempt + 1,
-                        cfg.GEMINI_EXTRACTION_MAX_ATTEMPTS,
-                    )
-                    await _sleep_backoff(
-                        cfg.GEMINI_EXTRACTION_BACKOFF_BASE_SECONDS, attempt
-                    )
-                    continue
-
-                raise GeminiExtractionError(
-                    f"Error HTTP de Gemini: {resp.status_code} — {resp.text[:500]}"
-                )
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 if attempt + 1 < cfg.GEMINI_EXTRACTION_MAX_ATTEMPTS:
                     logger.warning(
@@ -231,5 +234,24 @@ async def extract_from_local_file(
                 raise GeminiExtractionError(
                     "No se pudo completar la extracción tras reintentos."
                 ) from exc
-            except GeminiExtractionError:
-                raise
+
+            if resp.status_code == 200:
+                return _local_extraction_from_gemini_payload(resp.json())
+
+            if _should_retry_status(resp.status_code) and attempt + 1 < (
+                cfg.GEMINI_EXTRACTION_MAX_ATTEMPTS
+            ):
+                logger.warning(
+                    "Gemini HTTP %s (intento %s/%s). Reintentando…",
+                    resp.status_code,
+                    attempt + 1,
+                    cfg.GEMINI_EXTRACTION_MAX_ATTEMPTS,
+                )
+                await _sleep_backoff(
+                    cfg.GEMINI_EXTRACTION_BACKOFF_BASE_SECONDS, attempt
+                )
+                continue
+
+            raise GeminiExtractionError(
+                f"Error HTTP de Gemini: {resp.status_code} — {resp.text[:500]}"
+            )

@@ -56,7 +56,7 @@ def _failure_message(exc: BaseException) -> str:
     return f"Error en extracción: {type(exc).__name__}"
 
 
-async def _append_historial(
+def _append_historial(
     db: AsyncSession,
     *,
     incapacidad_id: uuid.UUID,
@@ -89,7 +89,7 @@ async def _marcar_fallo_extraccion(
         detalle = f"{detalle[:397]}..."
     incap.documentacion_faltante = [f"extraccion_ia:{detalle}"]
     obs = mensaje if len(mensaje) <= 2000 else f"{mensaje[:1997]}..."
-    await _append_historial(
+    _append_historial(
         db,
         incapacidad_id=incap.id,
         anterior=prev,
@@ -129,7 +129,7 @@ async def _marcar_exito_extraccion(
             modelo="gemini-2.5-flash",
         )
     )
-    await _append_historial(
+    _append_historial(
         db,
         incapacidad_id=incap.id,
         anterior=prev,
