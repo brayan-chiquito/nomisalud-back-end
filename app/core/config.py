@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     UPLOAD_STORAGE_DIR: str = "var/uploads"
     MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024  # 10 MiB
 
+    # Google Gemini (extracción IA)
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_EXTRACTION_MAX_ATTEMPTS: int = 4
+    GEMINI_EXTRACTION_BACKOFF_BASE_SECONDS: float = 1.0
+    GEMINI_HTTP_TIMEOUT_SECONDS: float = 120.0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

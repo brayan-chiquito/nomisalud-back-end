@@ -27,6 +27,10 @@ services:
       - .env
     environment:
       POSTGRES_HOST: db
+      # En Windows + Docker Desktop, watchfiles (Rust) puede fallar observando bind mounts:
+      # _rust_notify.WatchfilesRustInternalError: Input/output error (os error 5)
+      # Forzar polling evita el watcher nativo y estabiliza el --reload.
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
     volumes:
