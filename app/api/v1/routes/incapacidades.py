@@ -10,6 +10,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
@@ -21,9 +22,17 @@ from app.core.dependencies import require_roles
 from app.models.historial_estado import HistorialEstado
 from app.models.incapacidad import IncapacidadEstado
 from app.models.user import UserRole
-from app.schemas.incapacidad import IncapacidadUploadResponse
+from app.schemas.incapacidad import (
+    IncapacidadListItem,
+    IncapacidadListResponse,
+    IncapacidadUploadResponse,
+)
 from app.schemas.token import TokenPayload
 from app.services.incapacidad_extraction_jobs import run_incapacidad_extraction_job
+from app.services.incapacidad_list_service import (
+    list_incapacidades_paginated,
+    total_pages,
+)
 from app.services.incapacidad_storage import IncapacidadStorageError
 from app.services.incapacidad_upload_service import register_incapacidad_upload
 
@@ -48,6 +57,93 @@ def _ensure_puede_cargar_para_colaborador(
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="No puede cargar incapacidades para otro colaborador.",
+    )
+
+
+def _parse_estado_filtro(raw: str | None) -> IncapacidadEstado | None:
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return IncapacidadEstado(raw.strip().lower())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Parámetro estado no es un valor válido.",
+        ) from exc
+
+
+@router.get(
+    "",
+    response_model=IncapacidadListResponse,
+    summary="Listado paginado de incapacidades",
+    description=(
+        "Devuelve incapacidades con filtros opcionales (`estado`, `tipo`, `entidad`) "
+        "y paginación (`page`). El rol colaborador solo ve sus trámites; RRHH y admin "
+        "ven el universo completo."
+    ),
+)
+async def list_incapacidades(
+    page: int = Query(1, ge=1, description="Número de página (base 1)"),
+    estado: str | None = Query(None, description="Filtrar por estado del trámite"),
+    tipo: str | None = Query(
+        None,
+        description=(
+            "Tipo de archivo (pdf, jpg, png) o tipo de incapacidad en datos extraídos"
+        ),
+    ),
+    entidad: str | None = Query(
+        None, description="Subcadena del nombre de entidad (datos extraídos)"
+    ),
+    current_user: TokenPayload = Depends(
+        require_roles(
+            UserRole.COLABORADOR,
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> IncapacidadListResponse:
+    estado_enum = _parse_estado_filtro(estado)
+    colaborador_id_scope: UUID | None = None
+    if UserRole(current_user.role) == UserRole.COLABORADOR:
+        colaborador_id_scope = UUID(current_user.user_id)
+
+    settings = get_settings()
+    page_size = settings.INCAPACIDADES_PAGE_SIZE
+    rows, total = await list_incapacidades_paginated(
+        db,
+        page=page,
+        page_size=page_size,
+        estado=estado_enum,
+        tipo=tipo,
+        entidad=entidad,
+        colaborador_id_scope=colaborador_id_scope,
+    )
+    items = [
+        IncapacidadListItem(
+            id=r.incapacidad.id,
+            radicado=r.incapacidad.radicado,
+            estado=r.incapacidad.estado.value,
+            colaborador_id=r.incapacidad.colaborador_id,
+            colaborador_nombre=r.colaborador_nombre,
+            colaborador_email=r.colaborador_email,
+            archivo_tipo=r.incapacidad.archivo_tipo.value
+            if r.incapacidad.archivo_tipo
+            else None,
+            fecha_recepcion=r.incapacidad.fecha_recepcion,
+            entidad_nombre=r.entidad_nombre,
+            entidad_tipo=r.entidad_tipo,
+            entidad_nit=r.entidad_nit,
+            entidad_ciudad=r.entidad_ciudad,
+            incapacidad_tipo_extraido=r.incapacidad_tipo_extraido,
+        )
+        for r in rows
+    ]
+    return IncapacidadListResponse(
+        items=items,
+        total=total,
+        pages=total_pages(total, page_size),
     )
 
 

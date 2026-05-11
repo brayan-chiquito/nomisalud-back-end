@@ -35,6 +35,7 @@ docker compose up --build
 | GET    | `/api/v1/health/`              | No   | Estado básico de la API |
 | GET    | `/api/v1/health/db`            | No   | Verifica conexión a PostgreSQL |
 | POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
+| GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye nombre y email del colaborador y campos de entidad desde extracción IA |
 | POST   | `/api/v1/incapacidades/upload` | Sí   | Carga PDF/JPG/PNG, crea trámite y encola extracción IA (Gemini 2.5 Flash) |
 | GET    | `/api/v1/demo/me`              | Sí   | [DEMO] Payload del JWT decodificado |
 | GET    | `/api/v1/demo/colaborador`     | Sí   | [DEMO] Acceso por cualquier rol |
@@ -56,10 +57,78 @@ Cuerpo JSON (201 Created):
 
 - **`radicado`**: identificador único del trámite (máx. 20 caracteres).
 - **`estado`**: al cerrar la petición el trámite queda en **`procesando_ia`**. La API **no espera** a Gemini: la extracción corre en **segundo plano** (`BackgroundTasks`).
-- Tras un extracción **correcta**, el estado pasa a **`en_verificacion`** y se crea la fila en **`extraccion_ia`** (`datos_extraidos`, `validaciones`, `raw_response`, modelo, etc.).
+- Tras un extracción **correcta**, el estado pasa a **`en_verificacion`** y se crea la fila en **`extraccion_ia`** con los campos del modelo: `datos_extraidos`, `campos_corregidos`, `validaciones`, `raw_response`, `api_usada`, `modelo`, `tokens_input`, `tokens_output`, `costo_usd`, `calidad_doc`, `verificado_por`, `verificado_en`, `created_at`.
 - Si la extracción **falla** (archivo, API, JSON inválido…), el estado suele quedar en **`doc_incompleta`** con detalle en `documentacion_faltante`.
 
 Roles permitidos en upload: `colaborador`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin`. Un colaborador solo puede cargar para sí mismo salvo que RRHH/admin indiquen `colaborador_id` en el formulario.
+
+### Respuesta `GET /api/v1/incapacidades`
+
+Parámetros de consulta (todos opcionales; si omites filtros, se listan todos los trámites permitidos por rol):
+
+#### `page`
+
+- Entero **≥ 1**. Por defecto **`1`**.
+- La API rechaza valores menores que 1 con error de validación.
+
+#### `estado`
+
+- Filtra por el estado persistido del trámite.
+- Debe coincidir **exactamente** (tras normalizar espacios y minúsculas) con **uno** de estos valores:
+
+`recibida` · `procesando_ia` · `en_verificacion` · `doc_incompleta` · `transcrita` · `cobrada` · `rechazada` · `pagada`
+
+- Cualquier otro valor produce **422** con mensaje de estado inválido.
+
+#### `tipo`
+
+Comportamiento según el texto enviado (se recorta espacio en blanco y se compara en minúsculas):
+
+1. **`pdf`**, **`jpg`** o **`png`**  
+   Filtra por el tipo de **archivo adjunto** (`incapacidades.archivo_tipo`). Solo estos tres valores activan este modo.
+
+2. **Cualquier otro texto no vacío**  
+   Filtra por **igualdad exacta** con el valor almacenado en el JSON `datos_extraidos.incapacidad.tipo` (el contenido lo define la extracción IA; no hay lista cerrada en la API). Solo aplica a trámites que tengan fila en **`extraccion_ia`** (la consulta hace `JOIN` con esa tabla).
+
+#### `entidad`
+
+- Texto libre: se busca como **subcadena** insensible a mayúsculas y minúsculas dentro de `datos_extraidos.entidad.nombre`.
+- Solo afecta a trámites con fila en **`extraccion_ia`** (misma condición de `JOIN` que cuando usas el modo (2) de `tipo`).
+- Puedes combinarlo con `tipo`: si usas `tipo=pdf` y `entidad=…`, ambos filtros se aplican a la vez (`AND`).
+
+Cuerpo JSON (200 OK):
+
+```json
+{
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "radicado": "IN0123456789ABCDEF0",
+      "estado": "transcrita",
+      "colaborador_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "colaborador_nombre": "Ana María Gómez",
+      "colaborador_email": "ana@nomisalud.com",
+      "archivo_tipo": "pdf",
+      "fecha_recepcion": "2025-03-01T12:00:00Z",
+      "entidad_nombre": "EPS Sura",
+      "entidad_tipo": "EPS",
+      "entidad_nit": "800123456-7",
+      "entidad_ciudad": "Bogotá",
+      "incapacidad_tipo_extraido": "enfermedad_general"
+    }
+  ],
+  "total": 45,
+  "pages": 3
+}
+```
+
+- **`colaborador_nombre`**: `users.nombre_completo` del titular; puede ser `null` si el perfil no tiene nombre cargado (el front puede mostrar `colaborador_email` como respaldo).
+- **`colaborador_email`**: `users.email` del titular.
+- **`entidad_*`**, **`incapacidad_tipo_extraido`**: leídos de `extraccion_ia.datos_extraidos` cuando existe extracción; si aún no hay fila IA o el documento no trae el dato, suelen ser `null` (columna entidad en UI: usar `entidad_nombre` y campos relacionados).
+
+- **`total`**: cantidad de registros que cumplen los filtros (sin depender de la página).
+- **`pages`**: número de páginas según `INCAPACIDADES_PAGE_SIZE` (por defecto **20**; ver `.env.example`).
+- Mismos roles que el upload. Un **colaborador** solo obtiene sus trámites; **RRHH** y **admin** ven el listado completo.
 
 ### Extracción IA (configuración)
 
@@ -72,6 +141,8 @@ El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. V
 | `GEMINI_EXTRACTION_MAX_ATTEMPTS` | Reintentos ante 429 / 5xx / red |
 | `GEMINI_EXTRACTION_BACKOFF_BASE_SECONDS` | Backoff exponencial entre reintentos |
 | `GEMINI_HTTP_TIMEOUT_SECONDS` | Timeout HTTP hacia la API de Gemini |
+
+Además, para el listado de trámites: **`INCAPACIDADES_PAGE_SIZE`** (por defecto `20`) controla cuántos ítems devuelve cada página en `GET /api/v1/incapacidades`.
 
 Sin `GEMINI_API_KEY`, el archivo se guarda y el trámite puede quedar en flujo de error de extracción al ejecutarse el job.
 
@@ -104,7 +175,7 @@ curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
   -F "archivo=@./mi_incapacidad.pdf;type=application/pdf"
 ```
 
-Respuesta típica: `{"radicado":"IN…","estado":"procesando_ia"}`. Consulta el trámite en base de datos (o un futuro endpoint de detalle) para ver `en_verificacion` / `doc_incompleta` cuando termine el job.
+Respuesta típica: `{"radicado":"IN…","estado":"procesando_ia"}`. Puedes listar trámites con `GET /api/v1/incapacidades` o consultar la base de datos para ver `en_verificacion` / `doc_incompleta` cuando termine el job.
 
 Si RRHH/admin carga para un colaborador específico:
 
@@ -115,6 +186,20 @@ curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
   -H "Authorization: Bearer $TOKEN" \
   -F "colaborador_id=$COLABORADOR_ID" \
   -F "archivo=@./mi_incapacidad.png;type=image/png"
+```
+
+#### Listado de incapacidades (paginado)
+
+```bash
+curl -s "http://localhost:8000/api/v1/incapacidades?page=1&estado=transcrita" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Ejemplo con filtro por tipo de archivo y búsqueda por entidad (usa datos extraídos):
+
+```bash
+curl -s "http://localhost:8000/api/v1/incapacidades?tipo=pdf&entidad=sura" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 
@@ -138,7 +223,7 @@ nomisalud-back-end/
 │   │           ├── auth.py
 │   │           ├── demo.py
 │   │           ├── health.py
-│   │           └── incapacidades.py  # POST upload + BackgroundTasks
+│   │           └── incapacidades.py  # GET listado + POST upload + BackgroundTasks
 │   ├── models/
 │   │   ├── user.py
 │   │   ├── incapacidad.py
@@ -150,6 +235,7 @@ nomisalud-back-end/
 │   ├── services/
 │   │   ├── ai_extractor.py           # Llamada REST Gemini + normalización JSON
 │   │   ├── incapacidad_extraction_jobs.py  # Job post-upload (BD + extracción)
+│   │   ├── incapacidad_list_service.py     # Consulta paginada y filtros (listado)
 │   │   ├── incapacidad_storage.py
 │   │   └── incapacidad_upload_service.py
 │   └── repositories/
@@ -169,7 +255,7 @@ nomisalud-back-end/
 
 ## Migraciones con Alembic
 
-El historial incluye dominio de usuarios, **incapacidades**, **extraccion_ia** (incl. columna **`raw_response`**), **historial_estados**, etc. Tras clonar o actualizar código, ejecuta siempre `upgrade head` antes de probar uploads con IA.
+El historial de migraciones cubre el dominio de usuarios, las tablas **incapacidades**, **extraccion_ia** (incluida la columna **`raw_response`**), **historial_estados** y demás cambios de esquema versionados en `alembic/versions`. Tras clonar o actualizar código, ejecuta siempre `upgrade head` antes de probar uploads con IA.
 
 ```bash
 # Aplicar todas las migraciones pendientes

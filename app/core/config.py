@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # Carga de incapacidades (multipart)
     UPLOAD_STORAGE_DIR: str = "var/uploads"
     MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024  # 10 MiB
+    INCAPACIDADES_PAGE_SIZE: int = 20
 
     # Google Gemini (extracción IA)
     GEMINI_API_KEY: str | None = None
