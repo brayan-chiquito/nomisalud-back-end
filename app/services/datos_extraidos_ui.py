@@ -67,14 +67,8 @@ def enrich_datos_extraidos_for_ui(data: dict[str, Any] | None) -> dict[str, Any]
         }
 
     # --- diagnóstico plano (evita que el front reciba solo el objeto anidado)
-    codigo = (
-        _as_str(diag.get("codigo_cie10"))
-        or _as_str(incap.get("codigo_cie10"))
-    )
-    descripcion = (
-        _as_str(diag.get("descripcion"))
-        or _as_str(incap.get("diagnostico"))
-    )
+    codigo = _as_str(diag.get("codigo_cie10")) or _as_str(incap.get("codigo_cie10"))
+    descripcion = _as_str(diag.get("descripcion")) or _as_str(incap.get("diagnostico"))
 
     principal: str | None = None
     if codigo and descripcion and codigo != descripcion:
