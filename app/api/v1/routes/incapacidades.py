@@ -11,23 +11,35 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import require_roles
+from app.models.extraccion_ia import ExtraccionIA
 from app.models.historial_estado import HistorialEstado
 from app.models.incapacidad import IncapacidadEstado
 from app.models.user import UserRole
 from app.schemas.incapacidad import (
+    ExtraccionIADetalleResponse,
+    IncapacidadDetalleResponse,
     IncapacidadListItem,
     IncapacidadListResponse,
     IncapacidadUploadResponse,
+    IncapacidadVerificarRequest,
+    IncapacidadVerificarResponse,
 )
 from app.schemas.token import TokenPayload
+from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
+from app.services.incapacidad_detail_service import (
+    get_incapacidad_detalle,
+    resolve_archivo_under_storage,
+)
 from app.services.incapacidad_extraction_jobs import run_incapacidad_extraction_job
 from app.services.incapacidad_list_service import (
     list_incapacidades_paginated,
@@ -35,6 +47,10 @@ from app.services.incapacidad_list_service import (
 )
 from app.services.incapacidad_storage import IncapacidadStorageError
 from app.services.incapacidad_upload_service import register_incapacidad_upload
+from app.services.incapacidad_verify_service import (
+    IncapacidadVerifyError,
+    verify_incapacidad_manual,
+)
 
 router = APIRouter(prefix="/incapacidades", tags=["Incapacidades"])
 
@@ -58,6 +74,47 @@ def _ensure_puede_cargar_para_colaborador(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="No puede cargar incapacidades para otro colaborador.",
     )
+
+
+def _ensure_puede_ver_incapacidad(actor: TokenPayload, colaborador_id: UUID) -> None:
+    """Colaborador solo ve trámites propios; RRHH y admin ven todos."""
+    if UserRole(actor.role) == UserRole.COLABORADOR:
+        if UUID(actor.user_id) != colaborador_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tiene permiso para ver esta incapacidad.",
+            )
+
+
+def _extraccion_to_schema(ext: ExtraccionIA) -> ExtraccionIADetalleResponse:
+    datos = enrich_datos_extraidos_for_ui(
+        ext.datos_extraidos if isinstance(ext.datos_extraidos, dict) else {}
+    )
+    return ExtraccionIADetalleResponse(
+        id=ext.id,
+        incapacidad_id=ext.incapacidad_id,
+        datos_extraidos=datos,
+        campos_corregidos=ext.campos_corregidos,
+        validaciones=ext.validaciones,
+        raw_response=ext.raw_response,
+        api_usada=ext.api_usada,
+        modelo=ext.modelo,
+        tokens_input=ext.tokens_input,
+        tokens_output=ext.tokens_output,
+        costo_usd=float(ext.costo_usd) if ext.costo_usd is not None else None,
+        calidad_doc=ext.calidad_doc.value if ext.calidad_doc else None,
+        verificado_por=ext.verificado_por,
+        verificado_en=ext.verificado_en,
+        created_at=ext.created_at,
+    )
+
+
+_ARCHIVO_MEDIA_TYPE = {
+    "pdf": "application/pdf",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+}
 
 
 def _parse_estado_filtro(raw: str | None) -> IncapacidadEstado | None:
@@ -144,6 +201,167 @@ async def list_incapacidades(
         items=items,
         total=total,
         pages=total_pages(total, page_size),
+    )
+
+
+@router.get(
+    "/{incapacidad_id}",
+    response_model=IncapacidadDetalleResponse,
+    summary="Detalle de incapacidad",
+    description=(
+        "Devuelve el trámite, la extracción IA asociada (si existe) y la URL para "
+        "descargar el documento. Mismas reglas de acceso que el listado."
+    ),
+)
+async def get_incapacidad_por_id(
+    incapacidad_id: UUID,
+    request: Request,
+    current_user: TokenPayload = Depends(
+        require_roles(
+            UserRole.COLABORADOR,
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> IncapacidadDetalleResponse:
+    bundle = await get_incapacidad_detalle(db, incapacidad_id)
+    if bundle is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Incapacidad no encontrada.",
+        )
+    inc = bundle.incapacidad
+    _ensure_puede_ver_incapacidad(current_user, inc.colaborador_id)
+
+    archivo_url: str | None = None
+    if inc.archivo_path and inc.archivo_path.strip():
+        archivo_url = str(
+            request.url_for(
+                "download_incapacidad_archivo",
+                incapacidad_id=str(inc.id),
+            )
+        )
+
+    ext_schema = (
+        _extraccion_to_schema(bundle.extraccion_ia)
+        if bundle.extraccion_ia is not None
+        else None
+    )
+
+    return IncapacidadDetalleResponse(
+        id=inc.id,
+        radicado=inc.radicado,
+        estado=inc.estado.value,
+        colaborador_id=inc.colaborador_id,
+        colaborador_nombre=bundle.colaborador_nombre,
+        colaborador_email=bundle.colaborador_email,
+        cargado_por=inc.cargado_por,
+        user_id=inc.user_id,
+        archivo_uuid=inc.archivo_uuid,
+        archivo_tipo=inc.archivo_tipo.value if inc.archivo_tipo else None,
+        archivo_tamano_bytes=inc.archivo_tamano_bytes,
+        documentacion_faltante=inc.documentacion_faltante,
+        fecha_recepcion=inc.fecha_recepcion,
+        created_at=inc.created_at,
+        updated_at=inc.updated_at,
+        extraccion_ia=ext_schema,
+        archivo_url=archivo_url,
+    )
+
+
+@router.get(
+    "/{incapacidad_id}/archivo",
+    name="download_incapacidad_archivo",
+    summary="Descargar documento adjunto",
+    description="Sirve el archivo almacenado; requiere el mismo JWT que el detalle.",
+    response_class=FileResponse,
+)
+async def download_incapacidad_archivo(
+    incapacidad_id: UUID,
+    current_user: TokenPayload = Depends(
+        require_roles(
+            UserRole.COLABORADOR,
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    bundle = await get_incapacidad_detalle(db, incapacidad_id)
+    if bundle is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Incapacidad no encontrada.",
+        )
+    inc = bundle.incapacidad
+    _ensure_puede_ver_incapacidad(current_user, inc.colaborador_id)
+
+    settings = get_settings()
+    storage = Path(settings.UPLOAD_STORAGE_DIR)
+    path = resolve_archivo_under_storage(inc.archivo_path, storage)
+    if path is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Archivo no disponible.",
+        )
+
+    if inc.archivo_tipo:
+        ext = inc.archivo_tipo.value
+    else:
+        ext = path.suffix.lower().lstrip(".")
+    media = _ARCHIVO_MEDIA_TYPE.get(ext, "application/octet-stream")
+    filename = f"{inc.radicado}.{ext}"
+    return FileResponse(
+        path,
+        media_type=media,
+        filename=filename,
+    )
+
+
+@router.put(
+    "/{incapacidad_id}/verificar",
+    response_model=IncapacidadVerificarResponse,
+    summary="Verificar datos extraídos (RRHH / admin)",
+    description=(
+        "Registra la revisión humana sobre la extracción IA: `confirmar` deja el "
+        "trámite en `en_verificacion` (y opcionalmente actualiza `datos_extraidos`); "
+        "`rechazar` pasa a `rechazada` y guarda `motivo_rechazo` en "
+        "`documentacion_faltante`."
+    ),
+)
+async def verificar_incapacidad_extraccion(
+    incapacidad_id: UUID,
+    body: IncapacidadVerificarRequest,
+    current_user: TokenPayload = Depends(
+        require_roles(
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> IncapacidadVerificarResponse:
+    try:
+        inc = await verify_incapacidad_manual(
+            db,
+            incapacidad_id=incapacidad_id,
+            actor_id=UUID(current_user.user_id),
+            accion=body.accion.value,
+            motivo_rechazo=body.motivo_rechazo,
+            datos_extraidos=body.datos_extraidos,
+        )
+    except IncapacidadVerifyError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
+    return IncapacidadVerificarResponse(
+        id=inc.id,
+        radicado=inc.radicado,
+        estado=inc.estado.value,
     )
 
 
