@@ -36,6 +36,9 @@ docker compose up --build
 | GET    | `/api/v1/health/db`            | No   | Verifica conexión a PostgreSQL |
 | POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
 | GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye nombre y email del colaborador y campos de entidad desde extracción IA |
+| GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: registro principal, objeto `extraccion_ia` completo y `archivo_url` para descarga |
+| GET    | `/api/v1/incapacidades/{id}/archivo` | Sí | Descarga del documento adjunto (mismo JWT que el detalle; ruta validada bajo `UPLOAD_STORAGE_DIR`) |
+| PUT    | `/api/v1/incapacidades/{id}/verificar` | Sí | Verificación humana RRHH/admin: `confirmar` o `rechazar` (actualiza extracción, estado e historial) |
 | POST   | `/api/v1/incapacidades/upload` | Sí   | Carga PDF/JPG/PNG, crea trámite y encola extracción IA (Gemini 2.5 Flash) |
 | GET    | `/api/v1/demo/me`              | Sí   | [DEMO] Payload del JWT decodificado |
 | GET    | `/api/v1/demo/colaborador`     | Sí   | [DEMO] Acceso por cualquier rol |
@@ -130,6 +133,43 @@ Cuerpo JSON (200 OK):
 - **`pages`**: número de páginas según `INCAPACIDADES_PAGE_SIZE` (por defecto **20**; ver `.env.example`).
 - Mismos roles que el upload. Un **colaborador** solo obtiene sus trámites; **RRHH** y **admin** ven el listado completo.
 
+### `GET /api/v1/incapacidades/{id}` (detalle)
+
+- **Roles:** `colaborador`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin` (el colaborador solo puede consultar trámites donde él es el titular `colaborador_id`).
+- **404** si el `id` no existe.
+- **403** si un colaborador intenta ver el trámite de otra persona.
+
+La respuesta incluye los campos del trámite (radicado, estado, colaborador, archivo, fechas, `documentacion_faltante`, …), nombre y email del colaborador desde `users`, el bloque anidado **`extraccion_ia`** con todos los campos persistidos en la tabla `extraccion_ia` (o `null` si aún no hay extracción), y **`archivo_url`**: URL absoluta hacia `GET /api/v1/incapacidades/{id}/archivo` cuando hay `archivo_path` guardado; si no, `null`.
+
+En **`extraccion_ia.datos_extraidos`** la API fusiona el JSON del prompt de IA (`paciente`, `incapacidad`, `diagnostico` anidado, `entidad`, …) con campos pensados para el **dashboard**: objeto **`colaborador`** (`nombre_completo`, `documento` desde `paciente`) y en **`incapacidad`** strings **`dias`** (desde `total_dias`), **`origen`** (etiqueta legible según `tipo`), **`codigo_cie10`**, **`diagnostico`** (descripción) y **`diagnostico_principal`** (código y descripción combinados). Así el front puede enlazar campos simples sin renderizar el objeto `diagnostico` como `[object Object]`. Los bloques originales del modelo (`paciente`, `diagnostico`, …) se mantienen.
+
+### `GET /api/v1/incapacidades/{id}/archivo` (descarga)
+
+- Mismos **roles** y reglas de acceso que el detalle.
+- **404** si la incapacidad no existe, si no hay permiso, si no hay ruta de archivo o si el fichero no está en disco dentro del directorio de uploads.
+- El `Content-Type` se infiere del tipo de archivo del trámite o de la extensión del fichero en disco.
+
+### `PUT /api/v1/incapacidades/{id}/verificar` (revisión RRHH)
+
+- **Roles:** solo `auxiliar_rrhh`, `coordinador_rrhh` y `admin` (un colaborador recibe **403**).
+- Cuerpo JSON:
+
+| Campo | Obligatorio | Descripción |
+|-------|-------------|---------------|
+| `accion` | Sí | `confirmar` o `rechazar` |
+| `motivo_rechazo` | Sí si `rechazar` | Texto no vacío (se normaliza con trim); se guarda en `documentacion_faltante` como lista de un elemento |
+| `datos_extraidos` | No | Si se envía con `confirmar`, **reemplaza** el JSON en `extraccion_ia` y se **enriquece** con los mismos campos UI que en el detalle (colaborador, `dias`, `origen`, diagnóstico plano) antes de persistir |
+
+Comportamiento:
+
+- Requiere que exista fila **`extraccion_ia`** para ese trámite; si no, **422**.
+- No se puede verificar si el estado actual es `rechazada`, `pagada` o `cobrada` (**409**).
+- **`confirmar`:** opcionalmente actualiza `datos_extraidos`; asigna `verificado_por` y `verificado_en`; estado del trámite → **`en_verificacion`**.
+- **`rechazar`:** estado → **`rechazada`**; persiste el motivo; asigna `verificado_por` y `verificado_en`.
+- En ambos casos se inserta un registro en **`historial_estados`**.
+
+Respuesta **200** (JSON): `id`, `radicado`, `estado`.
+
 ### Extracción IA (configuración)
 
 El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. Variables relevantes (ver **`.env.example`**):
@@ -175,7 +215,7 @@ curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
   -F "archivo=@./mi_incapacidad.pdf;type=application/pdf"
 ```
 
-Respuesta típica: `{"radicado":"IN…","estado":"procesando_ia"}`. Puedes listar trámites con `GET /api/v1/incapacidades` o consultar la base de datos para ver `en_verificacion` / `doc_incompleta` cuando termine el job.
+Respuesta típica: `{"radicado":"IN…","estado":"procesando_ia"}`. Puedes listar con `GET /api/v1/incapacidades`, ver detalle con `GET /api/v1/incapacidades/{id}` o revisar la base de datos para estados `en_verificacion` / `doc_incompleta` cuando termine el job.
 
 Si RRHH/admin carga para un colaborador específico:
 
@@ -202,6 +242,34 @@ curl -s "http://localhost:8000/api/v1/incapacidades?tipo=pdf&entidad=sura" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+#### Detalle, descarga y verificación
+
+```bash
+INCAPACIDAD_ID="550e8400-e29b-41d4-a716-446655440000"
+
+# Detalle (JSON con extraccion_ia y archivo_url)
+curl -s "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Descargar el PDF/imagen (guardar a disco)
+curl -s -L -o incapacidad.pdf \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/archivo"
+
+# Verificar con RRHH: confirmar datos (opcional: enviar datos_extraidos corregidos)
+curl -s -X PUT "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/verificar" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"accion":"confirmar"}'
+
+# Rechazar (motivo obligatorio)
+curl -s -X PUT "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/verificar" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"accion":"rechazar","motivo_rechazo":"Documento ilegible"}'
+```
+
+Usa un token de usuario **auxiliar_rrhh**, **coordinador_rrhh** o **admin** para `PUT .../verificar`.
 
 ---
 
@@ -223,7 +291,7 @@ nomisalud-back-end/
 │   │           ├── auth.py
 │   │           ├── demo.py
 │   │           ├── health.py
-│   │           └── incapacidades.py  # GET listado + POST upload + BackgroundTasks
+│   │           └── incapacidades.py  # listado, detalle, archivo, verificar, upload
 │   ├── models/
 │   │   ├── user.py
 │   │   ├── incapacidad.py
@@ -235,7 +303,10 @@ nomisalud-back-end/
 │   ├── services/
 │   │   ├── ai_extractor.py           # Llamada REST Gemini + normalización JSON
 │   │   ├── incapacidad_extraction_jobs.py  # Job post-upload (BD + extracción)
+│   │   ├── datos_extraidos_ui.py          # Enriquece datos_extraidos para contrato UI + IA
 │   │   ├── incapacidad_list_service.py     # Consulta paginada y filtros (listado)
+│   │   ├── incapacidad_detail_service.py   # Detalle + validación de ruta de adjunto
+│   │   ├── incapacidad_verify_service.py   # Verificación manual RRHH (PUT verificar)
 │   │   ├── incapacidad_storage.py
 │   │   └── incapacidad_upload_service.py
 │   └── repositories/

@@ -1,7 +1,9 @@
+import enum
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class IncapacidadUploadResponse(BaseModel):
@@ -62,3 +64,86 @@ class IncapacidadListResponse(BaseModel):
     items: list[IncapacidadListItem]
     total: int = Field(..., ge=0)
     pages: int = Field(..., ge=0)
+
+
+class ExtraccionIADetalleResponse(BaseModel):
+    """Campos persistidos de la extracción IA (tabla `extraccion_ia`)."""
+
+    id: uuid.UUID
+    incapacidad_id: uuid.UUID
+    datos_extraidos: dict[str, Any]
+    campos_corregidos: dict[str, Any] | None
+    validaciones: dict[str, Any] | None
+    raw_response: str | None
+    api_usada: str | None
+    modelo: str | None
+    tokens_input: int | None
+    tokens_output: int | None
+    costo_usd: float | None
+    calidad_doc: str | None
+    verificado_por: uuid.UUID | None
+    verificado_en: datetime | None
+    created_at: datetime
+
+
+class IncapacidadDetalleResponse(BaseModel):
+    """Detalle del trámite: registro principal, extracción IA y URL del adjunto."""
+
+    id: uuid.UUID
+    radicado: str
+    estado: str
+    colaborador_id: uuid.UUID
+    colaborador_nombre: str | None = None
+    colaborador_email: str | None = None
+    cargado_por: uuid.UUID
+    user_id: uuid.UUID
+    archivo_uuid: str | None
+    archivo_tipo: str | None
+    archivo_tamano_bytes: int | None
+    documentacion_faltante: list[str] | None
+    fecha_recepcion: datetime
+    created_at: datetime
+    updated_at: datetime
+    extraccion_ia: ExtraccionIADetalleResponse | None
+    archivo_url: str | None = Field(
+        None,
+        description=(
+            "URL absoluta para descargar el documento "
+            "(GET mismo host, requiere el mismo JWT)"
+        ),
+    )
+
+
+class IncapacidadVerificarAccion(str, enum.Enum):
+    CONFIRMAR = "confirmar"
+    RECHAZAR = "rechazar"
+
+
+class IncapacidadVerificarRequest(BaseModel):
+    """Cuerpo para revisión humana de la extracción IA."""
+
+    accion: IncapacidadVerificarAccion
+    motivo_rechazo: str | None = Field(
+        None,
+        description="Obligatorio si accion=rechazar; texto persistente del motivo",
+    )
+    datos_extraidos: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Si se envía con confirmar, reemplaza por completo `datos_extraidos` "
+            "en la fila `extraccion_ia`"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _motivo_si_rechazo(self):
+        if self.accion == IncapacidadVerificarAccion.RECHAZAR:
+            if self.motivo_rechazo is None or not str(self.motivo_rechazo).strip():
+                raise ValueError("motivo_rechazo es obligatorio al rechazar.")
+        return self
+
+
+class IncapacidadVerificarResponse(BaseModel):
+    id: uuid.UUID
+    radicado: str
+    estado: str

@@ -15,6 +15,7 @@ from app.models.extraccion_ia import ExtraccionIA
 from app.models.historial_estado import HistorialEstado
 from app.models.incapacidad import Incapacidad, IncapacidadEstado
 from app.services.ai_extractor import GeminiExtractionError, extract_from_local_file
+from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ async def _marcar_exito_extraccion(
         return
 
     datos, validaciones = _split_extraccion_payload(result)
+    datos = enrich_datos_extraidos_for_ui(datos)
     prev = incap.estado
     incap.estado = IncapacidadEstado.EN_VERIFICACION
     db.add(
