@@ -81,8 +81,13 @@ async def test_job_exito_actualiza_en_verificacion(monkeypatch):
         lambda: _fake_session_cm(session),
     )
     monkeypatch.setattr(Path, "is_file", lambda self: True)
+    monkeypatch.setattr(
+        "app.services.incapacidad_extraction_jobs._obtener_texto_ocr_archivo",
+        AsyncMock(return_value="texto ocr previo"),
+    )
 
-    async def fake_extract(*_a, **_k):
+    async def fake_extract(*_a, **kwargs):
+        assert kwargs.get("texto_ocr") == "texto ocr previo"
         return LocalExtractionResult(
             normalized={
                 "paciente": {"nombre_completo": "X"},

@@ -15,6 +15,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -34,6 +35,12 @@ _GEMINI_MODEL_FLASH_2_5: Final[str] = "gemini-2.5-flash"
 
 _GEMINI_GENERATE_URL: Final[str] = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL_FLASH_2_5}:generateContent"
+)
+
+_OCR_PLACEHOLDER: Final[str] = "{{OCR_TEXTO}}"
+_OCR_SECTION_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\n━+\nCONTEXTO ADICIONAL — TEXTO OCR\n━+\n\n.*?\n\n\{\{OCR_TEXTO\}\}\n",
+    re.DOTALL,
 )
 
 _ROOT_KEYS: Final[tuple[str, ...]] = (
@@ -77,6 +84,34 @@ def load_extraction_prompt() -> str:
         raise GeminiExtractionError(
             f"No se pudo leer el archivo de prompt: {_PROMPT_PATH}"
         ) from exc
+
+
+def texto_ocr_disponible(texto_ocr: str | None) -> bool:
+    """True si hay texto OCR no vacío para inyectar en el prompt."""
+    return bool(texto_ocr and texto_ocr.strip())
+
+
+def build_extraction_prompt(texto_ocr: str | None = None) -> str:
+    """
+    Ensambla el prompt de extracción.
+
+    Si ``texto_ocr`` está disponible, reemplaza ``{{OCR_TEXTO}}`` en la sección
+    designada; si no, omite por completo el bloque de contexto OCR.
+    """
+    base = load_extraction_prompt()
+    match = _OCR_SECTION_PATTERN.search(base)
+    if match is None:
+        if texto_ocr_disponible(texto_ocr):
+            return f"{base.rstrip()}\n\n{_OCR_PLACEHOLDER}\n".replace(
+                _OCR_PLACEHOLDER, texto_ocr.strip()
+            )
+        return base
+
+    if not texto_ocr_disponible(texto_ocr):
+        return base[: match.start()] + "\n" + base[match.end() :]
+
+    bloque = match.group(0).replace(_OCR_PLACEHOLDER, texto_ocr.strip())
+    return base[: match.start()] + bloque + base[match.end() :]
 
 
 async def read_file_as_base64(file_path: str | Path) -> tuple[str, str]:
@@ -180,6 +215,7 @@ async def extract_from_local_file(
     *,
     settings: Settings | None = None,
     mime_type: str | None = None,
+    texto_ocr: str | None = None,
 ) -> LocalExtractionResult:
     """
     Extrae información estructurada desde un archivo local usando Gemini.
@@ -195,7 +231,7 @@ async def extract_from_local_file(
     b64, guessed_mime = await read_file_as_base64(file_path)
     mime = (mime_type or guessed_mime).strip()
 
-    prompt = load_extraction_prompt()
+    prompt = build_extraction_prompt(texto_ocr)
     url = _GEMINI_GENERATE_URL
     params = {"key": cfg.GEMINI_API_KEY}
 

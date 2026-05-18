@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -16,6 +17,7 @@ from app.models.historial_estado import HistorialEstado
 from app.models.incapacidad import Incapacidad, IncapacidadEstado
 from app.services.ai_extractor import GeminiExtractionError, extract_from_local_file
 from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
+from app.services.ocr_processor import OcrProcessorError, procesar_documento
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,30 @@ async def _marcar_fallo_extraccion(
     )
 
 
+async def _obtener_texto_ocr_archivo(path: Path) -> str | None:
+    """Ejecuta OCR local; devuelve None si no hay texto o falla sin bloquear el job."""
+    try:
+
+        def _run_ocr() -> str:
+            resultado = procesar_documento(
+                path.read_bytes(),
+                nombre_archivo=path.name,
+            )
+            return resultado.texto.strip()
+
+        texto = await asyncio.to_thread(_run_ocr)
+        if texto:
+            logger.info(
+                "OCR previo a Gemini: %s caracteres (%s)",
+                len(texto),
+                path.name,
+            )
+            return texto
+    except (OcrProcessorError, OSError, ValueError) as exc:
+        logger.warning("OCR omitido antes de Gemini (%s): %s", path.name, exc)
+    return None
+
+
 async def _marcar_exito_extraccion(
     db: AsyncSession,
     incap: Incapacidad,
@@ -180,8 +206,13 @@ async def run_incapacidad_extraction_job(
                 await db.commit()
                 return
 
+            texto_ocr = await _obtener_texto_ocr_archivo(path)
             try:
-                outcome = await extract_from_local_file(path, settings=cfg)
+                outcome = await extract_from_local_file(
+                    path,
+                    settings=cfg,
+                    texto_ocr=texto_ocr,
+                )
             except (GeminiExtractionError, ValueError, FileNotFoundError) as exc:
                 await _marcar_fallo_extraccion(
                     db, incap, actor_user_id, _failure_message(exc)

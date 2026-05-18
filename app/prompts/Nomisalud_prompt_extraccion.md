@@ -31,6 +31,16 @@ El documento puede ser cualquiera de estos formatos:
 - Prórroga de incapacidad
 - Documento escaneado, fotografiado o en PDF digital
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXTO ADICIONAL — TEXTO OCR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+El siguiente bloque proviene de OCR del mismo documento adjunto. Úsalo solo como
+referencia complementaria si la imagen o el PDF no son legibles. No inventes datos
+que no aparezcan en el documento ni en este texto.
+
+{{OCR_TEXTO}}
+
 Extrae los datos y retorna ÚNICAMENTE este JSON.
 Si un campo no está visible, no es legible o no existe en el documento, usa null.
 NUNCA inventes, supongas ni completes datos que no estén explícitamente en el documento.
