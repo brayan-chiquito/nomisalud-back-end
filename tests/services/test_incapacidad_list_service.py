@@ -9,6 +9,7 @@ from app.models.incapacidad import IncapacidadEstado
 from app.services.incapacidad_list_service import (
     IncapacidadListRow,
     list_incapacidades_paginated,
+    list_mis_incapacidades_paginated,
     total_pages,
 )
 
@@ -101,4 +102,32 @@ async def test_list_tipo_negocio_y_entidad_usa_join() -> None:
         entidad="Sanitas",
         colaborador_id_scope=None,
     )
+    assert db.execute.await_count == 2
+
+
+def _mock_db_mis_results(*, total: int, incapacidades: list) -> AsyncMock:
+    db = AsyncMock()
+    mock_count = MagicMock()
+    mock_count.scalar_one.return_value = total
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = incapacidades
+    mock_list = MagicMock()
+    mock_list.scalars.return_value = mock_scalars
+    db.execute = AsyncMock(side_effect=[mock_count, mock_list])
+    return db
+
+
+@pytest.mark.asyncio
+async def test_list_mis_filtra_por_colaborador() -> None:
+    cid = uuid.uuid4()
+    inc = MagicMock()
+    db = _mock_db_mis_results(total=1, incapacidades=[inc])
+    rows, total = await list_mis_incapacidades_paginated(
+        db,
+        colaborador_id=cid,
+        page=1,
+        page_size=20,
+    )
+    assert total == 1
+    assert rows == [inc]
     assert db.execute.await_count == 2

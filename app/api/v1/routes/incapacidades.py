@@ -35,6 +35,8 @@ from app.schemas.incapacidad import (
     IncapacidadUploadResponse,
     IncapacidadVerificarRequest,
     IncapacidadVerificarResponse,
+    MisIncapacidadItem,
+    MisIncapacidadListResponse,
 )
 from app.schemas.token import TokenPayload
 from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
@@ -49,6 +51,7 @@ from app.services.incapacidad_estado_service import (
 from app.services.incapacidad_extraction_jobs import run_incapacidad_extraction_job
 from app.services.incapacidad_list_service import (
     list_incapacidades_paginated,
+    list_mis_incapacidades_paginated,
     total_pages,
 )
 from app.services.incapacidad_storage import IncapacidadStorageError
@@ -204,6 +207,46 @@ async def list_incapacidades(
         for r in rows
     ]
     return IncapacidadListResponse(
+        items=items,
+        total=total,
+        pages=total_pages(total, page_size),
+    )
+
+
+@router.get(
+    "/mias",
+    response_model=MisIncapacidadListResponse,
+    summary="Mis incapacidades",
+    description=(
+        "Listado paginado de trámites donde el usuario autenticado es el titular "
+        "(`colaborador_id` del JWT). Cada ítem incluye el estado actual y "
+        "`updated_at` (última modificación)."
+    ),
+)
+async def list_mis_incapacidades(
+    page: int = Query(1, ge=1, description="Número de página (base 1)"),
+    current_user: TokenPayload = Depends(require_roles(UserRole.COLABORADOR)),
+    db: AsyncSession = Depends(get_db),
+) -> MisIncapacidadListResponse:
+    user_id = UUID(current_user.user_id)
+    settings = get_settings()
+    page_size = settings.INCAPACIDADES_PAGE_SIZE
+    rows, total = await list_mis_incapacidades_paginated(
+        db,
+        colaborador_id=user_id,
+        page=page,
+        page_size=page_size,
+    )
+    items = [
+        MisIncapacidadItem(
+            id=inc.id,
+            radicado=inc.radicado,
+            estado=inc.estado.value,
+            updated_at=inc.updated_at,
+        )
+        for inc in rows
+    ]
+    return MisIncapacidadListResponse(
         items=items,
         total=total,
         pages=total_pages(total, page_size),

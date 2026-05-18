@@ -152,3 +152,32 @@ async def list_incapacidades_paginated(
             )
         )
     return out, total
+
+
+async def list_mis_incapacidades_paginated(
+    db: AsyncSession,
+    *,
+    colaborador_id: uuid.UUID,
+    page: int,
+    page_size: int,
+) -> tuple[list[Incapacidad], int]:
+    """
+    Lista trámites del colaborador autenticado (filtro estricto por titular).
+
+    Ordenados por ``updated_at`` descendente (última modificación primero).
+    """
+    where = Incapacidad.colaborador_id == colaborador_id
+
+    count_stmt = select(func.count(Incapacidad.id)).where(where)
+    total = int((await db.execute(count_stmt)).scalar_one())
+
+    offset = (page - 1) * page_size
+    list_stmt = (
+        select(Incapacidad)
+        .where(where)
+        .order_by(Incapacidad.updated_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    result = await db.execute(list_stmt)
+    return list(result.scalars().all()), total
