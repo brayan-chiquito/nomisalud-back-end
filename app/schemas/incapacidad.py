@@ -176,7 +176,10 @@ class IncapacidadPatchEstadoRequest(BaseModel):
     observacion: str | None = Field(
         None,
         max_length=4000,
-        description="Motivo u observación de auditoría (opcional)",
+        description=(
+            "Motivo u observación de auditoría. Obligatorio si estado es rechazada "
+            "(se persiste también en documentacion_faltante)."
+        ),
     )
 
 
@@ -185,3 +188,34 @@ class IncapacidadPatchEstadoResponse(BaseModel):
     radicado: str
     estado: str
     estado_anterior: str
+
+
+class IncapacidadDocumentacionFaltanteRequest(BaseModel):
+    """Cuerpo para registrar documentos faltantes (SCRUM-144)."""
+
+    documentos: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Lista de documentos o requisitos pendientes",
+    )
+    observacion: str | None = Field(
+        None,
+        max_length=4000,
+        description="Observación de auditoría (opcional)",
+    )
+
+    @model_validator(mode="after")
+    def _documentos_no_vacios(self):
+        if not any(str(d).strip() for d in self.documentos):
+            raise ValueError(
+                "Debe indicar al menos un documento faltante (texto no vacío)."
+            )
+        return self
+
+
+class IncapacidadDocumentacionFaltanteResponse(BaseModel):
+    id: uuid.UUID
+    radicado: str
+    estado: str
+    estado_anterior: str
+    documentacion_faltante: list[str]

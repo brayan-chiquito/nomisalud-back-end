@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.historial_estado import HistorialEstado
 from app.models.incapacidad import Incapacidad, IncapacidadEstado
+from app.services.incapacidad_transiciones import destinos_patch_validos
 
 
 class IncapacidadCambioEstadoError(Exception):
@@ -18,26 +19,6 @@ class IncapacidadCambioEstadoError(Exception):
         self.status_code = status_code
         self.detail = detail
         super().__init__(detail)
-
-
-# Transiciones manuales permitidas (RRHH / admin). Estados iniciales del flujo
-# automático (recibida, procesando_ia) y terminales sin salida no aparecen como origen.
-_TRANSICIONES_DESDE: dict[IncapacidadEstado, frozenset[IncapacidadEstado]] = {
-    IncapacidadEstado.EN_VERIFICACION: frozenset(
-        {
-            IncapacidadEstado.TRANSCRITA,
-            IncapacidadEstado.DOC_INCOMPLETA,
-            IncapacidadEstado.RECHAZADA,
-        }
-    ),
-    IncapacidadEstado.DOC_INCOMPLETA: frozenset({IncapacidadEstado.EN_VERIFICACION}),
-    IncapacidadEstado.TRANSCRITA: frozenset({IncapacidadEstado.COBRADA}),
-    IncapacidadEstado.COBRADA: frozenset({IncapacidadEstado.PAGADA}),
-}
-
-
-def _destinos_validos(desde: IncapacidadEstado) -> frozenset[IncapacidadEstado]:
-    return _TRANSICIONES_DESDE.get(desde, frozenset())
 
 
 async def aplicar_parche_estado_incapacidad(
@@ -67,7 +48,7 @@ async def aplicar_parche_estado_incapacidad(
             "El trámite ya se encuentra en el estado solicitado.",
         )
 
-    permitidos = _destinos_validos(prev)
+    permitidos = destinos_patch_validos(prev)
     if nuevo_estado not in permitidos:
         raise IncapacidadCambioEstadoError(
             409,
@@ -75,11 +56,18 @@ async def aplicar_parche_estado_incapacidad(
         )
 
     obs = observacion.strip() if observacion and observacion.strip() else None
+    if nuevo_estado == IncapacidadEstado.RECHAZADA and obs is None:
+        raise IncapacidadCambioEstadoError(
+            422,
+            "observacion es obligatoria al pasar el trámite a rechazada.",
+        )
     if obs is None:
         obs = f"Cambio de estado: {prev.value} → {nuevo_estado.value}."
 
     ts = datetime.now(UTC)
     inc.estado = nuevo_estado
+    if nuevo_estado == IncapacidadEstado.RECHAZADA:
+        inc.documentacion_faltante = [obs]
     db.add(
         HistorialEstado(
             incapacidad_id=inc.id,

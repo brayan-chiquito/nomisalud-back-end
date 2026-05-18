@@ -32,7 +32,7 @@ async def test_confirmar_sin_datos_mantiene_json_y_estado_en_verificacion() -> N
 
     inc = MagicMock()
     inc.id = iid
-    inc.estado = IncapacidadEstado.TRANSCRITA
+    inc.estado = IncapacidadEstado.DOC_INCOMPLETA
     inc.extraccion_ia = ext
 
     db = _setup_session(inc)
@@ -52,6 +52,48 @@ async def test_confirmar_sin_datos_mantiene_json_y_estado_en_verificacion() -> N
     hist = db.add.call_args[0][0]
     assert isinstance(hist, HistorialEstado)
     assert hist.estado_nuevo == IncapacidadEstado.EN_VERIFICACION
+    assert hist.estado_anterior == IncapacidadEstado.DOC_INCOMPLETA
+
+
+@pytest.mark.asyncio
+async def test_confirmar_en_verificacion_sin_historial_duplicado() -> None:
+    iid = uuid.uuid4()
+    ext = MagicMock()
+    inc = MagicMock()
+    inc.id = iid
+    inc.estado = IncapacidadEstado.EN_VERIFICACION
+    inc.extraccion_ia = ext
+    db = _setup_session(inc)
+
+    await verify_incapacidad_manual(
+        db,
+        incapacidad_id=iid,
+        actor_id=uuid.uuid4(),
+        accion="confirmar",
+        motivo_rechazo=None,
+        datos_extraidos=None,
+    )
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_confirmar_desde_transcrita_409() -> None:
+    ext = MagicMock()
+    inc = MagicMock()
+    inc.estado = IncapacidadEstado.TRANSCRITA
+    inc.extraccion_ia = ext
+    db = _setup_session(inc)
+
+    with pytest.raises(IncapacidadVerifyError) as ei:
+        await verify_incapacidad_manual(
+            db,
+            incapacidad_id=inc.id,
+            actor_id=uuid.uuid4(),
+            accion="confirmar",
+            motivo_rechazo=None,
+            datos_extraidos=None,
+        )
+    assert ei.value.status_code == 409
 
 
 @pytest.mark.asyncio
