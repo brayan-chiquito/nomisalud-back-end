@@ -68,6 +68,24 @@ class IncapacidadListResponse(BaseModel):
     pages: int = Field(..., ge=0)
 
 
+class MisIncapacidadItem(BaseModel):
+    """Resumen de un trámite propio del colaborador autenticado (SCRUM-141)."""
+
+    id: uuid.UUID
+    radicado: str
+    estado: str = Field(..., description="Estado actual del trámite")
+    updated_at: datetime = Field(
+        ...,
+        description="Fecha y hora de la última modificación del registro",
+    )
+
+
+class MisIncapacidadListResponse(BaseModel):
+    items: list[MisIncapacidadItem]
+    total: int = Field(..., ge=0)
+    pages: int = Field(..., ge=0)
+
+
 class ExtraccionIADetalleResponse(BaseModel):
     """Campos persistidos de la extracción IA (tabla `extraccion_ia`)."""
 

@@ -36,6 +36,7 @@ docker compose up --build
 | GET    | `/api/v1/health/db`            | No   | Verifica conexión a PostgreSQL |
 | POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
 | GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye nombre y email del colaborador y campos de entidad desde extracción IA |
+| GET    | `/api/v1/incapacidades/mias`   | Sí   | Mis trámites (solo `colaborador`): filtro estricto por JWT; cada ítem incluye `estado` y `updated_at` |
 | GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: registro principal, objeto `extraccion_ia` completo y `archivo_url` para descarga |
 | GET    | `/api/v1/incapacidades/{id}/archivo` | Sí | Descarga del documento adjunto (mismo JWT que el detalle; ruta validada bajo `UPLOAD_STORAGE_DIR`) |
 | PUT    | `/api/v1/incapacidades/{id}/verificar` | Sí | Verificación humana RRHH/admin: `confirmar` o `rechazar` (actualiza extracción, estado e historial) |
@@ -133,6 +134,14 @@ Cuerpo JSON (200 OK):
 - **`total`**: cantidad de registros que cumplen los filtros (sin depender de la página).
 - **`pages`**: número de páginas según `INCAPACIDADES_PAGE_SIZE` (por defecto **20**; ver `.env.example`).
 - Mismos roles que el upload. Un **colaborador** solo obtiene sus trámites; **RRHH** y **admin** ven el listado completo.
+
+### `GET /api/v1/incapacidades/mias` (mis trámites)
+
+- **Rol:** solo `colaborador`.
+- Filtra **siempre** por el `user_id` del JWT (`colaborador_id` del titular).
+- Parámetro **`page`** (≥ 1, por defecto 1); paginación con `INCAPACIDADES_PAGE_SIZE`.
+- Cada ítem incluye **`estado`** (actual) y **`updated_at`** (última modificación del registro), más `id` y `radicado`.
+- Orden: `updated_at` descendente (más recientes primero).
 
 ### `GET /api/v1/incapacidades/{id}` (detalle)
 
