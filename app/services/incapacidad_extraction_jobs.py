@@ -105,6 +105,7 @@ async def _marcar_fallo_extraccion(
 async def _obtener_texto_ocr_archivo(path: Path) -> str | None:
     """Ejecuta OCR local; devuelve None si no hay texto o falla sin bloquear el job."""
     try:
+
         def _run_ocr() -> str:
             resultado = procesar_documento(
                 path.read_bytes(),

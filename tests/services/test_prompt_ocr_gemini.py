@@ -173,9 +173,7 @@ async def test_comparativo_ocr_incrementa_campos_minimos(tmp_path, monkeypatch) 
     settings.GEMINI_EXTRACTION_BACKOFF_BASE_SECONDS = 0.01
     settings.GEMINI_HTTP_TIMEOUT_SECONDS = 30.0
 
-    sin_ocr = await extract_from_local_file(
-        f, settings=settings, texto_ocr=None
-    )
+    sin_ocr = await extract_from_local_file(f, settings=settings, texto_ocr=None)
     con_ocr = await extract_from_local_file(
         f, settings=settings, texto_ocr=_OCR_MUESTRA
     )

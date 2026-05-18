@@ -184,6 +184,4 @@ def procesar_documento(
             paginas=len(imagenes),
         )
 
-    raise OcrProcessorError(
-        "Tipo de documento no soportado. Use PDF, JPG/JPEG o PNG."
-    )
+    raise OcrProcessorError("Tipo de documento no soportado. Use PDF, JPG/JPEG o PNG.")
