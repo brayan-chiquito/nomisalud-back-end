@@ -18,3 +18,9 @@ python-multipart==0.0.20
 
 # HTTP client (para llamadas externas futuras)
 httpx==0.28.1
+
+# OCR e imágenes (SCRUM-165 / SCRUM-166)
+Pillow==11.0.0
+pytesseract==0.3.13
+pypdf==5.1.0
+pdf2image==1.17.0

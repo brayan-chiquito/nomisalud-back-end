@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     GEMINI_EXTRACTION_BACKOFF_BASE_SECONDS: float = 1.0
     GEMINI_HTTP_TIMEOUT_SECONDS: float = 120.0
 
+    # Tesseract OCR (SCRUM-165 / SCRUM-166)
+    TESSERACT_CMD: str | None = None
+    TESSERACT_LANG: str = "spa+eng"
+    OCR_CONTRAST_FACTOR: float = 2.0
+    OCR_PDF_RENDER_DPI: int = 200
+    OCR_MIN_CHARS_PDF_NATIVO: int = 40
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

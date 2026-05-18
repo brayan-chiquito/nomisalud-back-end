@@ -160,6 +160,49 @@ En **`extraccion_ia.datos_extraidos`** la API fusiona el JSON del prompt de IA (
 - **404** si la incapacidad no existe, si no hay permiso, si no hay ruta de archivo o si el fichero no está en disco dentro del directorio de uploads.
 - El `Content-Type` se infiere del tipo de archivo del trámite o de la extensión del fichero en disco.
 
+### Estados del trámite — cómo dejar cada solicitud en un estado
+
+Valores posibles del campo `estado` en `incapacidades`:
+
+`recibida` · `procesando_ia` · `en_verificacion` · `doc_incompleta` · `transcrita` · `cobrada` · `rechazada` · `pagada`
+
+```mermaid
+stateDiagram-v2
+    [*] --> recibida: POST upload
+    recibida --> procesando_ia: automático
+    procesando_ia --> en_verificacion: extracción IA OK
+    procesando_ia --> doc_incompleta: extracción IA falla
+    en_verificacion --> transcrita: PATCH estado
+    en_verificacion --> doc_incompleta: PUT doc. faltante o PATCH
+    en_verificacion --> rechazada: PUT verificar o PATCH
+    doc_incompleta --> en_verificacion: PATCH estado
+    transcrita --> cobrada: PATCH estado
+    cobrada --> pagada: PATCH estado
+    rechazada --> [*]
+    pagada --> [*]
+```
+
+| Estado | Qué significa | Cómo llegar (acción) | Quién / endpoint |
+|--------|----------------|----------------------|------------------|
+| **`recibida`** | Trámite recién creado en BD | Ocurre un instante al registrar el upload; en la práctica la API responde ya en el siguiente estado | Automático (`POST …/upload`) |
+| **`procesando_ia`** | Archivo guardado; extracción Gemini + OCR en segundo plano | Respuesta inmediata del upload (`201` con `"estado":"procesando_ia"`) | Automático |
+| **`en_verificacion`** | Extracción IA terminó bien; RRHH debe revisar | Job en background tras upload exitoso (Gemini + fila `extraccion_ia`) | Automático |
+| **`doc_incompleta`** | Faltan documentos o falló la lectura del archivo | **A)** Job de extracción falla (sin `GEMINI_API_KEY`, error API, archivo ilegible, etc.) → `documentacion_faltante` con prefijo `extraccion_ia:…` · **B)** RRHH registra lista de pendientes desde `en_verificacion` · **C)** `PATCH` manual a `doc_incompleta` desde `en_verificacion` | Automático o **RRHH** → `PUT …/documentacion-faltante` o `PATCH …/estado` |
+| **`transcrita`** | Trámite aprobado para el flujo de cobro | RRHH aprueba después de revisar datos | **RRHH** → `PATCH …/estado` con `"estado":"transcrita"` (solo desde `en_verificacion`) |
+| **`cobrada`** | Cobro registrado ante la entidad | Avance administrativo post-transcripción | **RRHH** → `PATCH …/estado` con `"estado":"cobrada"` (solo desde `transcrita`) |
+| **`pagada`** | Pago al colaborador completado | Estado terminal del ciclo de pago | **RRHH** → `PATCH …/estado` con `"estado":"pagada"` (solo desde `cobrada`) |
+| **`rechazada`** | Trámite no procede | RRHH rechaza en verificación o cambia estado manualmente | **RRHH** → `PUT …/verificar` con `"accion":"rechazar"` **o** `PATCH …/estado` con `"estado":"rechazada"` (desde `en_verificacion`; `observacion` obligatoria en PATCH) |
+
+**Notas:**
+
+- Los cambios manuales de estado (`PATCH`, `PUT verificar`, `PUT documentacion-faltante`) requieren rol **`auxiliar_rrhh`**, **`coordinador_rrhh`** o **`admin`**.
+- Cada cambio de estado manual (salvo `confirmar` sin cambio de estado) deja rastro en **`historial_estados`**.
+- Desde **`rechazada`**, **`pagada`**, **`cobrada`** o **`transcrita`** no se puede volver atrás con los endpoints actuales.
+- Para **documentación incompleta con lista explícita** de pendientes, preferir **`PUT …/documentacion-faltante`** (rellena `documentacion_faltante` y pasa a `doc_incompleta`).
+
+**Secuencia feliz típica:**  
+`upload` → `procesando_ia` → `en_verificacion` → (`PUT verificar` `confirmar` opcional) → `PATCH` `transcrita` → `PATCH` `cobrada` → `PATCH` `pagada`.
+
 ### Flujo RRHH: verificar (aceptar/rechazar datos) vs cambio de estado
 
 Dos endpoints complementarios; no son equivalentes:
@@ -230,7 +273,9 @@ Respuesta **200** (JSON): `id`, `radicado`, `estado`, `estado_anterior`, `docume
 
 ### Extracción IA (configuración)
 
-El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. Variables relevantes (ver **`.env.example`**):
+El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. Antes de llamar a Gemini, el job de extracción ejecuta **OCR local** (`ocr_processor`); si hay texto, se inyecta en la sección **«CONTEXTO ADICIONAL — TEXTO OCR»** del prompt (`build_extraction_prompt`). Sin OCR disponible, esa sección se omite.
+
+Variables relevantes (ver **`.env.example`**):
 
 | Variable | Uso |
 |----------|-----|
@@ -243,6 +288,33 @@ El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. V
 Además, para el listado de trámites: **`INCAPACIDADES_PAGE_SIZE`** (por defecto `20`) controla cuántos ítems devuelve cada página en `GET /api/v1/incapacidades`.
 
 Sin `GEMINI_API_KEY`, el archivo se guarda y el trámite puede quedar en flujo de error de extracción al ejecutarse el job.
+
+### OCR con Tesseract (SCRUM-165)
+
+Dependencias Python: **`Pillow`** y **`pytesseract`** (`requirements.txt`). En Docker, el `Dockerfile` instala los paquetes de sistema **`tesseract-ocr`**, **`tesseract-ocr-eng`** y **`tesseract-ocr-spa`**.
+
+| Variable | Uso |
+|----------|-----|
+| `TESSERACT_LANG` | Idiomas OCR (por defecto `spa+eng`) |
+| `TESSERACT_CMD` | Ruta al binario `tesseract` si no está en `PATH` (opcional; útil en Windows) |
+
+Servicios:
+
+| Módulo | Uso |
+|--------|-----|
+| `ocr_tesseract.py` | OCR sobre una imagen (`extraer_texto_de_imagen`) |
+| `ocr_processor.py` | Flujo completo (SCRUM-166): clasifica PDF nativo/escaneado, pre-procesa imágenes (gris + contraste) y devuelve `ResultadoProcesamientoOcr` |
+
+Variables adicionales: `OCR_CONTRAST_FACTOR` (default `2.0`), `OCR_PDF_RENDER_DPI` (`200`), `OCR_MIN_CHARS_PDF_NATIVO` (`40`). En Docker también se instala **`poppler-utils`** (render de PDF escaneado vía `pdf2image`).
+
+Validar en contenedor:
+
+```bash
+docker compose build api
+docker compose run --rm api python -m pytest tests/services/test_ocr_tesseract.py -m integration -q
+```
+
+Los tests `@pytest.mark.integration` se omiten en hosts sin Tesseract; en la imagen Docker deben ejecutarse correctamente.
 
 ### Ejemplos `curl`
 
@@ -327,15 +399,53 @@ curl -s -X PUT "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/verif
   -d '{"accion":"rechazar","motivo_rechazo":"Documento ilegible"}'
 ```
 
-Usa un token de usuario **auxiliar_rrhh**, **coordinador_rrhh** o **admin** para `PUT .../verificar` y `PATCH .../estado`.
+Usa un token de usuario **auxiliar_rrhh**, **coordinador_rrhh** o **admin** para `PUT .../verificar`, `PUT .../documentacion-faltante` y `PATCH .../estado`.
 
 ```bash
-# Cambiar estado (ej. de en_verificacion a transcrita)
+# --- doc_incompleta (desde en_verificacion): lista de documentos pendientes ---
+curl -s -X PUT "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/documentacion-faltante" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"documentos":["Certificado médico","Historia clínica"],"observacion":"Pendiente de subsanar"}'
+
+# --- transcrita (aprobar trámite; solo desde en_verificacion) ---
 curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"estado":"transcrita","observacion":"Aprobado en revisión"}'
+
+# --- doc_incompleta (alternativa solo con PATCH, sin lista detallada) ---
+curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"estado":"doc_incompleta","observacion":"Falta documentación"}'
+
+# --- en_verificacion (colaborador subsanó; solo desde doc_incompleta) ---
+curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"estado":"en_verificacion","observacion":"Documentos recibidos"}'
+
+# --- rechazada (desde en_verificacion; observacion obligatoria) ---
+curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"estado":"rechazada","observacion":"No cumple requisitos"}'
+
+# --- cobrada (solo desde transcrita) ---
+curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"estado":"cobrada","observacion":"Radicado ante EPS"}'
+
+# --- pagada (solo desde cobrada) ---
+curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"estado":"pagada","observacion":"Pago realizado al colaborador"}'
 ```
+
+Para forzar **`doc_incompleta`** en pruebas sin RRHH: sube un archivo con extracción fallida (por ejemplo sin `GEMINI_API_KEY` en `.env`) o espera el error del job; el detalle/listado mostrará `estado: doc_incompleta`.
 
 ---
 
@@ -367,6 +477,8 @@ nomisalud-back-end/
 │   │   └── Nomisalud_prompt_extraccion.md  # Prompt Gemini (versionado en git)
 │   ├── schemas/              # Esquemas Pydantic (DTOs)
 │   ├── services/
+│   │   ├── ocr_tesseract.py            # OCR con Pillow + pytesseract
+│   │   ├── ocr_processor.py            # Clasificación nativo/escaneado + pre-procesado
 │   │   ├── ai_extractor.py           # Llamada REST Gemini + normalización JSON
 │   │   ├── incapacidad_extraction_jobs.py  # Job post-upload (BD + extracción)
 │   │   ├── datos_extraidos_ui.py          # Enriquece datos_extraidos para contrato UI + IA
