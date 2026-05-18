@@ -60,6 +60,24 @@ class TestIncapacidadPatchEstado:
             "estado_anterior": "en_verificacion",
         }
 
+    async def test_422_rechazada_sin_observacion(self, client: AsyncClient) -> None:
+        iid = uuid.uuid4()
+        token = _token(UserRole.ADMIN)
+        with patch(
+            "app.api.v1.routes.incapacidades.aplicar_parche_estado_incapacidad",
+            new_callable=AsyncMock,
+            side_effect=IncapacidadCambioEstadoError(
+                422,
+                "observacion es obligatoria al pasar el trámite a rechazada.",
+            ),
+        ):
+            r = await client.patch(
+                f"/api/v1/incapacidades/{iid}/estado",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"estado": "rechazada"},
+            )
+        assert r.status_code == 422
+
     async def test_404_desde_servicio(self, client: AsyncClient):
         iid = uuid.uuid4()
         token = _token(UserRole.COORDINADOR_RRHH)

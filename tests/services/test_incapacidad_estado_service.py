@@ -102,6 +102,45 @@ async def test_transicion_invalida_409() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rechazada_requiere_observacion() -> None:
+    inc = MagicMock()
+    inc.estado = IncapacidadEstado.EN_VERIFICACION
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=inc)
+
+    with pytest.raises(IncapacidadCambioEstadoError) as ei:
+        await aplicar_parche_estado_incapacidad(
+            db,
+            incapacidad_id=inc.id,
+            actor_id=uuid.uuid4(),
+            nuevo_estado=IncapacidadEstado.RECHAZADA,
+            observacion=None,
+        )
+    assert ei.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_rechazada_persiste_motivo_en_documentacion() -> None:
+    inc = MagicMock()
+    inc.estado = IncapacidadEstado.EN_VERIFICACION
+    inc.documentacion_faltante = None
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=inc)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    await aplicar_parche_estado_incapacidad(
+        db,
+        incapacidad_id=inc.id,
+        actor_id=uuid.uuid4(),
+        nuevo_estado=IncapacidadEstado.RECHAZADA,
+        observacion="No aplica",
+    )
+    assert inc.estado == IncapacidadEstado.RECHAZADA
+    assert inc.documentacion_faltante == ["No aplica"]
+
+
+@pytest.mark.asyncio
 async def test_no_existe_404() -> None:
     db = AsyncMock()
     db.get = AsyncMock(return_value=None)

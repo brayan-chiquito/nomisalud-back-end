@@ -28,6 +28,8 @@ from app.models.user import UserRole
 from app.schemas.incapacidad import (
     ExtraccionIADetalleResponse,
     IncapacidadDetalleResponse,
+    IncapacidadDocumentacionFaltanteRequest,
+    IncapacidadDocumentacionFaltanteResponse,
     IncapacidadListItem,
     IncapacidadListResponse,
     IncapacidadPatchEstadoRequest,
@@ -43,6 +45,10 @@ from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
 from app.services.incapacidad_detail_service import (
     get_incapacidad_detalle,
     resolve_archivo_under_storage,
+)
+from app.services.incapacidad_documentacion_service import (
+    IncapacidadDocumentacionError,
+    registrar_documentacion_faltante,
 )
 from app.services.incapacidad_estado_service import (
     IncapacidadCambioEstadoError,
@@ -453,6 +459,51 @@ async def patch_incapacidad_estado(
         radicado=inc.radicado,
         estado=inc.estado.value,
         estado_anterior=estado_anterior.value,
+    )
+
+
+@router.put(
+    "/{incapacidad_id}/documentacion-faltante",
+    response_model=IncapacidadDocumentacionFaltanteResponse,
+    summary="Registrar documentación faltante (RRHH / admin)",
+    description=(
+        "Persiste la lista de documentos pendientes en `documentacion_faltante` "
+        "y deja el trámite en `doc_incompleta` (desde `en_verificacion`). "
+        "Si ya está en `doc_incompleta`, solo actualiza la lista."
+    ),
+)
+async def registrar_documentacion_faltante_incapacidad(
+    incapacidad_id: UUID,
+    body: IncapacidadDocumentacionFaltanteRequest,
+    current_user: TokenPayload = Depends(
+        require_roles(
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> IncapacidadDocumentacionFaltanteResponse:
+    try:
+        inc, estado_anterior = await registrar_documentacion_faltante(
+            db,
+            incapacidad_id=incapacidad_id,
+            actor_id=UUID(current_user.user_id),
+            documentos=body.documentos,
+            observacion=body.observacion,
+        )
+    except IncapacidadDocumentacionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
+    docs = inc.documentacion_faltante or []
+    return IncapacidadDocumentacionFaltanteResponse(
+        id=inc.id,
+        radicado=inc.radicado,
+        estado=inc.estado.value,
+        estado_anterior=estado_anterior.value,
+        documentacion_faltante=docs,
     )
 
 

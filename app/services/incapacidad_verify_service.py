@@ -11,8 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.historial_estado import HistorialEstado
-from app.models.incapacidad import Incapacidad, IncapacidadEstado
+from app.models.incapacidad import Incapacidad
 from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
+from app.services.incapacidad_transiciones import (
+    ESTADO_TRAS_CONFIRMAR_VERIFICACION,
+    ESTADO_TRAS_RECHAZAR_VERIFICACION,
+    ESTADOS_QUE_ADMITEN_VERIFICAR,
+)
 
 
 class IncapacidadVerifyError(Exception):
@@ -22,15 +27,6 @@ class IncapacidadVerifyError(Exception):
         self.status_code = status_code
         self.detail = detail
         super().__init__(detail)
-
-
-_TERMINAL_PARA_VERIFICAR = frozenset(
-    {
-        IncapacidadEstado.RECHAZADA,
-        IncapacidadEstado.PAGADA,
-        IncapacidadEstado.COBRADA,
-    }
-)
 
 
 async def verify_incapacidad_manual(
@@ -45,10 +41,13 @@ async def verify_incapacidad_manual(
     """
     Aplica confirmación o rechazo de RRHH sobre la extracción IA.
 
-    - ``confirmar``: opcionalmente reemplaza ``datos_extraidos``; estado
-      ``en_verificacion``.
+    - ``confirmar``: valida la extracción IA; deja el trámite en
+      ``en_verificacion`` (desde ``en_verificacion``, ``doc_incompleta`` o
+      ``procesando_ia``). Si ya estaba en ``en_verificacion``, solo actualiza
+      metadatos de verificación sin duplicar historial de estado.
     - ``rechazar``: estado ``rechazada``; persiste ``motivo_rechazo`` en
-      ``documentacion_faltante`` (un elemento).
+      ``documentacion_faltante`` (un elemento). Para aprobar el trámite use
+      ``PATCH …/estado`` con destino ``transcrita``.
     """
     stmt = (
         select(Incapacidad)
@@ -66,10 +65,13 @@ async def verify_incapacidad_manual(
             "No hay extracción IA asociada; no se puede verificar este trámite.",
         )
 
-    if inc.estado in _TERMINAL_PARA_VERIFICAR:
+    if inc.estado not in ESTADOS_QUE_ADMITEN_VERIFICAR:
         raise IncapacidadVerifyError(
             409,
-            "El trámite no admite verificación en su estado actual.",
+            (
+                "El trámite no admite verificación en su estado actual. "
+                "Use PATCH /estado para transcribir, cobrar o pagar."
+            ),
         )
 
     prev = inc.estado
@@ -80,7 +82,8 @@ async def verify_incapacidad_manual(
             ext.datos_extraidos = enrich_datos_extraidos_for_ui(dict(datos_extraidos))
         ext.verificado_por = actor_id
         ext.verificado_en = now
-        inc.estado = IncapacidadEstado.EN_VERIFICACION
+        nuevo = ESTADO_TRAS_CONFIRMAR_VERIFICACION
+        inc.estado = nuevo
         observacion = "Verificación manual: datos confirmados."
     elif accion == "rechazar":
         if motivo_rechazo is None or not motivo_rechazo.strip():
@@ -89,7 +92,8 @@ async def verify_incapacidad_manual(
                 "motivo_rechazo es obligatorio al rechazar.",
             )
         motivo = motivo_rechazo.strip()
-        inc.estado = IncapacidadEstado.RECHAZADA
+        nuevo = ESTADO_TRAS_RECHAZAR_VERIFICACION
+        inc.estado = nuevo
         inc.documentacion_faltante = [motivo]
         ext.verificado_por = actor_id
         ext.verificado_en = now
@@ -97,14 +101,15 @@ async def verify_incapacidad_manual(
     else:
         raise IncapacidadVerifyError(422, "accion debe ser confirmar o rechazar.")
 
-    db.add(
-        HistorialEstado(
-            incapacidad_id=inc.id,
-            estado_anterior=prev,
-            estado_nuevo=inc.estado,
-            user_id=actor_id,
-            observacion=observacion,
+    if prev != inc.estado:
+        db.add(
+            HistorialEstado(
+                incapacidad_id=inc.id,
+                estado_anterior=prev,
+                estado_nuevo=inc.estado,
+                user_id=actor_id,
+                observacion=observacion,
+            )
         )
-    )
     await db.flush()
     return inc

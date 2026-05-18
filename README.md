@@ -41,6 +41,7 @@ docker compose up --build
 | GET    | `/api/v1/incapacidades/{id}/archivo` | Sí | Descarga del documento adjunto (mismo JWT que el detalle; ruta validada bajo `UPLOAD_STORAGE_DIR`) |
 | PUT    | `/api/v1/incapacidades/{id}/verificar` | Sí | Verificación humana RRHH/admin: `confirmar` o `rechazar` (actualiza extracción, estado e historial) |
 | PATCH  | `/api/v1/incapacidades/{id}/estado` | Sí | Cambio de estado con máquina de estados + `historial_estados` (solo RRHH/admin) |
+| PUT    | `/api/v1/incapacidades/{id}/documentacion-faltante` | Sí | Registra lista de documentos faltantes y pasa a `doc_incompleta` (RRHH/admin) |
 | POST   | `/api/v1/incapacidades/upload` | Sí   | Carga PDF/JPG/PNG, crea trámite y encola extracción IA (Gemini 2.5 Flash) |
 | GET    | `/api/v1/demo/me`              | Sí   | [DEMO] Payload del JWT decodificado |
 | GET    | `/api/v1/demo/colaborador`     | Sí   | [DEMO] Acceso por cualquier rol |
@@ -159,6 +160,20 @@ En **`extraccion_ia.datos_extraidos`** la API fusiona el JSON del prompt de IA (
 - **404** si la incapacidad no existe, si no hay permiso, si no hay ruta de archivo o si el fichero no está en disco dentro del directorio de uploads.
 - El `Content-Type` se infiere del tipo de archivo del trámite o de la extensión del fichero en disco.
 
+### Flujo RRHH: verificar (aceptar/rechazar datos) vs cambio de estado
+
+Dos endpoints complementarios; no son equivalentes:
+
+| Intención | Endpoint | Efecto principal |
+|-----------|----------|------------------|
+| **Aceptar datos extraídos por IA** (revisión del JSON) | `PUT …/verificar` con `accion: confirmar` | Marca `verificado_por` / `verificado_en`; el trámite queda o vuelve a **`en_verificacion`**. No pasa a `transcrita`. |
+| **Aprobar el trámite** (listo para cobro) | `PATCH …/estado` con `estado: transcrita` | Solo desde **`en_verificacion`**; registra historial. |
+| **Rechazar el trámite** | `PUT …/verificar` con `rechazar` **o** `PATCH …/estado` con `rechazada` | Estado **`rechazada`**; el motivo va en `documentacion_faltante` (`motivo_rechazo` o `observacion` obligatoria en PATCH). |
+| **Pedir documentos al colaborador** | `PUT …/documentacion-faltante` | Lista en `documentacion_faltante` y estado **`doc_incompleta`**. |
+| **Colaborador subsanó** | `PATCH …/estado` con `en_verificacion` | Solo desde **`doc_incompleta`**. |
+
+Secuencia típica de **aceptación completa**: extracción IA → `en_verificacion` → `PUT verificar` `confirmar` → `PATCH estado` `transcrita`.
+
 ### `PUT /api/v1/incapacidades/{id}/verificar` (revisión RRHH)
 
 - **Roles:** solo `auxiliar_rrhh`, `coordinador_rrhh` y `admin` (un colaborador recibe **403**).
@@ -173,20 +188,22 @@ En **`extraccion_ia.datos_extraidos`** la API fusiona el JSON del prompt de IA (
 Comportamiento:
 
 - Requiere que exista fila **`extraccion_ia`** para ese trámite; si no, **422**.
-- No se puede verificar si el estado actual es `rechazada`, `pagada` o `cobrada` (**409**).
-- **`confirmar`:** opcionalmente actualiza `datos_extraidos`; asigna `verificado_por` y `verificado_en`; estado del trámite → **`en_verificacion`**.
-- **`rechazar`:** estado → **`rechazada`**; persiste el motivo; asigna `verificado_por` y `verificado_en`.
-- En ambos casos se inserta un registro en **`historial_estados`**.
+- Solo admite verificación si el estado es **`en_verificacion`**, **`doc_incompleta`** o **`procesando_ia`**; en **`transcrita`**, **`cobrada`**, **`pagada`**, **`rechazada`** o **`recibida`** responde **409**.
+- **`confirmar`:** actualiza metadatos de verificación; estado → **`en_verificacion`**. Si ya estaba en ese estado, **no** duplica fila en `historial_estados`.
+- **`rechazar`:** estado → **`rechazada`**; persiste el motivo; historial solo si hubo cambio de estado.
+- Tras **`rechazada`**, no se puede volver a verificar ni transcribir por PATCH.
 
 Respuesta **200** (JSON): `id`, `radicado`, `estado`.
 
 ### `PATCH /api/v1/incapacidades/{id}/estado` (cambio de estado)
 
 - **Roles:** solo `auxiliar_rrhh`, `coordinador_rrhh` y `admin`.
-- Cuerpo JSON: `estado` (valor del enum del trámite) y opcionalmente `observacion` (auditoría).
+- Cuerpo JSON: `estado` (valor del enum del trámite) y `observacion` (auditoría; **obligatoria** si `estado` es `rechazada`).
 - **400** si el trámite ya está en el estado solicitado.
 - **409** si la transición no está permitida por la máquina de estados.
+- **422** si se pide `rechazada` sin `observacion`.
 - **404** si el `id` no existe.
+- Al pasar a **`rechazada`**, `observacion` se guarda también en `documentacion_faltante` (un elemento).
 
 Transiciones permitidas (origen → destinos):
 
@@ -200,6 +217,16 @@ Transiciones permitidas (origen → destinos):
 Se inserta **`historial_estados`** con `estado_anterior`, `estado_nuevo`, `user_id` del actor y `timestamp` en UTC (explícito en la fila).
 
 Respuesta **200** (JSON): `id`, `radicado`, `estado`, `estado_anterior`.
+
+### `PUT /api/v1/incapacidades/{id}/documentacion-faltante`
+
+- **Roles:** `auxiliar_rrhh`, `coordinador_rrhh`, `admin`.
+- **Cuerpo:** `documentos` (lista de strings, al menos un ítem con texto no vacío); `observacion` opcional para auditoría.
+- Persiste el listado en **`documentacion_faltante`** y deja el trámite en **`doc_incompleta`** cuando el estado actual es **`en_verificacion`** (con registro en **`historial_estados`**).
+- Si el trámite **ya** está en **`doc_incompleta`**, solo actualiza la lista (sin nuevo historial de cambio de estado).
+- **404** si el `id` no existe; **409** si el estado no admite esta operación; **422** si la lista queda vacía tras normalizar.
+
+Respuesta **200** (JSON): `id`, `radicado`, `estado`, `estado_anterior`, `documentacion_faltante`.
 
 ### Extracción IA (configuración)
 
@@ -346,6 +373,7 @@ nomisalud-back-end/
 │   │   ├── incapacidad_list_service.py     # Consulta paginada y filtros (listado)
 │   │   ├── incapacidad_detail_service.py   # Detalle + validación de ruta de adjunto
 │   │   ├── incapacidad_estado_service.py   # PATCH estado + máquina de estados
+│   │   ├── incapacidad_documentacion_service.py  # PUT documentación faltante
 │   │   ├── incapacidad_verify_service.py   # Verificación manual RRHH (PUT verificar)
 │   │   ├── incapacidad_storage.py
 │   │   └── incapacidad_upload_service.py
