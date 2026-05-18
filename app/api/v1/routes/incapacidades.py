@@ -30,6 +30,8 @@ from app.schemas.incapacidad import (
     IncapacidadDetalleResponse,
     IncapacidadListItem,
     IncapacidadListResponse,
+    IncapacidadPatchEstadoRequest,
+    IncapacidadPatchEstadoResponse,
     IncapacidadUploadResponse,
     IncapacidadVerificarRequest,
     IncapacidadVerificarResponse,
@@ -39,6 +41,10 @@ from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
 from app.services.incapacidad_detail_service import (
     get_incapacidad_detalle,
     resolve_archivo_under_storage,
+)
+from app.services.incapacidad_estado_service import (
+    IncapacidadCambioEstadoError,
+    aplicar_parche_estado_incapacidad,
 )
 from app.services.incapacidad_extraction_jobs import run_incapacidad_extraction_job
 from app.services.incapacidad_list_service import (
@@ -362,6 +368,48 @@ async def verificar_incapacidad_extraccion(
         id=inc.id,
         radicado=inc.radicado,
         estado=inc.estado.value,
+    )
+
+
+@router.patch(
+    "/{incapacidad_id}/estado",
+    response_model=IncapacidadPatchEstadoResponse,
+    summary="Cambiar estado del trámite (RRHH / admin)",
+    description=(
+        "Aplica una transición válida en la máquina de estados y registra "
+        "`historial_estados` con estado anterior, nuevo, usuario y marca de tiempo."
+    ),
+)
+async def patch_incapacidad_estado(
+    incapacidad_id: UUID,
+    body: IncapacidadPatchEstadoRequest,
+    current_user: TokenPayload = Depends(
+        require_roles(
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> IncapacidadPatchEstadoResponse:
+    try:
+        inc, estado_anterior = await aplicar_parche_estado_incapacidad(
+            db,
+            incapacidad_id=incapacidad_id,
+            actor_id=UUID(current_user.user_id),
+            nuevo_estado=body.estado,
+            observacion=body.observacion,
+        )
+    except IncapacidadCambioEstadoError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
+    return IncapacidadPatchEstadoResponse(
+        id=inc.id,
+        radicado=inc.radicado,
+        estado=inc.estado.value,
+        estado_anterior=estado_anterior.value,
     )
 
 

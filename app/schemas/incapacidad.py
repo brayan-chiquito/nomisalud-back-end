@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.models.incapacidad import IncapacidadEstado
+
 
 class IncapacidadUploadResponse(BaseModel):
     """Solo radicado y estado del trámite tras registrar la carga."""
@@ -147,3 +149,21 @@ class IncapacidadVerificarResponse(BaseModel):
     id: uuid.UUID
     radicado: str
     estado: str
+
+
+class IncapacidadPatchEstadoRequest(BaseModel):
+    """Cuerpo para cambiar estado del trámite (transiciones validadas en servidor)."""
+
+    estado: IncapacidadEstado
+    observacion: str | None = Field(
+        None,
+        max_length=4000,
+        description="Motivo u observación de auditoría (opcional)",
+    )
+
+
+class IncapacidadPatchEstadoResponse(BaseModel):
+    id: uuid.UUID
+    radicado: str
+    estado: str
+    estado_anterior: str

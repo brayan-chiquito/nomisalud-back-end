@@ -39,6 +39,7 @@ docker compose up --build
 | GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: registro principal, objeto `extraccion_ia` completo y `archivo_url` para descarga |
 | GET    | `/api/v1/incapacidades/{id}/archivo` | Sí | Descarga del documento adjunto (mismo JWT que el detalle; ruta validada bajo `UPLOAD_STORAGE_DIR`) |
 | PUT    | `/api/v1/incapacidades/{id}/verificar` | Sí | Verificación humana RRHH/admin: `confirmar` o `rechazar` (actualiza extracción, estado e historial) |
+| PATCH  | `/api/v1/incapacidades/{id}/estado` | Sí | Cambio de estado con máquina de estados + `historial_estados` (solo RRHH/admin) |
 | POST   | `/api/v1/incapacidades/upload` | Sí   | Carga PDF/JPG/PNG, crea trámite y encola extracción IA (Gemini 2.5 Flash) |
 | GET    | `/api/v1/demo/me`              | Sí   | [DEMO] Payload del JWT decodificado |
 | GET    | `/api/v1/demo/colaborador`     | Sí   | [DEMO] Acceso por cualquier rol |
@@ -170,6 +171,27 @@ Comportamiento:
 
 Respuesta **200** (JSON): `id`, `radicado`, `estado`.
 
+### `PATCH /api/v1/incapacidades/{id}/estado` (cambio de estado)
+
+- **Roles:** solo `auxiliar_rrhh`, `coordinador_rrhh` y `admin`.
+- Cuerpo JSON: `estado` (valor del enum del trámite) y opcionalmente `observacion` (auditoría).
+- **400** si el trámite ya está en el estado solicitado.
+- **409** si la transición no está permitida por la máquina de estados.
+- **404** si el `id` no existe.
+
+Transiciones permitidas (origen → destinos):
+
+| Estado actual | Puede pasar a |
+|---------------|----------------|
+| `en_verificacion` | `transcrita`, `doc_incompleta`, `rechazada` |
+| `doc_incompleta` | `en_verificacion` |
+| `transcrita` | `cobrada` |
+| `cobrada` | `pagada` |
+
+Se inserta **`historial_estados`** con `estado_anterior`, `estado_nuevo`, `user_id` del actor y `timestamp` en UTC (explícito en la fila).
+
+Respuesta **200** (JSON): `id`, `radicado`, `estado`, `estado_anterior`.
+
 ### Extracción IA (configuración)
 
 El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. Variables relevantes (ver **`.env.example`**):
@@ -269,7 +291,15 @@ curl -s -X PUT "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/verif
   -d '{"accion":"rechazar","motivo_rechazo":"Documento ilegible"}'
 ```
 
-Usa un token de usuario **auxiliar_rrhh**, **coordinador_rrhh** o **admin** para `PUT .../verificar`.
+Usa un token de usuario **auxiliar_rrhh**, **coordinador_rrhh** o **admin** para `PUT .../verificar` y `PATCH .../estado`.
+
+```bash
+# Cambiar estado (ej. de en_verificacion a transcrita)
+curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"estado":"transcrita","observacion":"Aprobado en revisión"}'
+```
 
 ---
 
@@ -291,7 +321,7 @@ nomisalud-back-end/
 │   │           ├── auth.py
 │   │           ├── demo.py
 │   │           ├── health.py
-│   │           └── incapacidades.py  # listado, detalle, archivo, verificar, upload
+│   │           └── incapacidades.py  # listado, detalle, archivo, verificar, patch estado, upload
 │   ├── models/
 │   │   ├── user.py
 │   │   ├── incapacidad.py
@@ -306,6 +336,7 @@ nomisalud-back-end/
 │   │   ├── datos_extraidos_ui.py          # Enriquece datos_extraidos para contrato UI + IA
 │   │   ├── incapacidad_list_service.py     # Consulta paginada y filtros (listado)
 │   │   ├── incapacidad_detail_service.py   # Detalle + validación de ruta de adjunto
+│   │   ├── incapacidad_estado_service.py   # PATCH estado + máquina de estados
 │   │   ├── incapacidad_verify_service.py   # Verificación manual RRHH (PUT verificar)
 │   │   ├── incapacidad_storage.py
 │   │   └── incapacidad_upload_service.py
