@@ -14,6 +14,7 @@ from app.services.ai_extractor import (
     extract_from_local_file,
     load_extraction_prompt,
     normalize_extraccion_json,
+    parse_inconsistencias_desde_extraccion,
     read_file_as_base64,
 )
 
@@ -72,8 +73,21 @@ def test_load_extraction_prompt_existe():
     txt = load_extraction_prompt()
     assert "paciente" in txt
     assert "validaciones" in txt
+    assert "inconsistencias" in txt
     assert "Gemini 2.5 Flash" in txt
     assert "paciente.nombre_completo" in txt
+
+
+def test_parse_inconsistencias_desde_extraccion_en_local_result():
+    payload = {
+        "inconsistencias": [
+            {"tipo": "genero_tipo", "descripcion": "maternidad con genero M"},
+            {"tipo": "legibilidad", "descripcion": "sello ilegible"},
+        ]
+    }
+    out = parse_inconsistencias_desde_extraccion(payload)
+    assert len(out) == 2
+    assert out[0].tipo == "genero_tipo"
 
 
 def test_campos_minimos_scrum126_ejemplo_completo_supera_umbral():

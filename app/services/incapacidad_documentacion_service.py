@@ -23,6 +23,7 @@ class IncapacidadDocumentacionError(Exception):
 _ESTADOS_QUE_ADMITEN_REGISTRO = frozenset(
     {
         IncapacidadEstado.EN_VERIFICACION,
+        IncapacidadEstado.INCONSISTENCIA_DETECTADA,
         IncapacidadEstado.DOC_INCOMPLETA,
     }
 )

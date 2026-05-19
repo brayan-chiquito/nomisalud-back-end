@@ -23,7 +23,7 @@ from app.core.database import get_db
 from app.core.dependencies import require_roles
 from app.models.extraccion_ia import ExtraccionIA
 from app.models.historial_estado import HistorialEstado
-from app.models.incapacidad import IncapacidadEstado
+from app.models.incapacidad import Incapacidad, IncapacidadEstado
 from app.models.user import UserRole
 from app.schemas.incapacidad import (
     ExtraccionIADetalleResponse,
@@ -37,6 +37,7 @@ from app.schemas.incapacidad import (
     IncapacidadUploadResponse,
     IncapacidadVerificarRequest,
     IncapacidadVerificarResponse,
+    InconsistenciaDetalleResponse,
     MisIncapacidadItem,
     MisIncapacidadListResponse,
 )
@@ -99,6 +100,20 @@ def _ensure_puede_ver_incapacidad(actor: TokenPayload, colaborador_id: UUID) -> 
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No tiene permiso para ver esta incapacidad.",
             )
+
+
+def _inconsistencias_to_schema(
+    inc: Incapacidad,
+) -> list[InconsistenciaDetalleResponse]:
+    return [
+        InconsistenciaDetalleResponse(
+            id=item.id,
+            tipo=item.tipo,
+            descripcion=item.descripcion,
+            created_at=item.created_at,
+        )
+        for item in sorted(inc.inconsistencias, key=lambda row: row.created_at)
+    ]
 
 
 def _extraccion_to_schema(ext: ExtraccionIA) -> ExtraccionIADetalleResponse:
@@ -322,6 +337,7 @@ async def get_incapacidad_por_id(
         created_at=inc.created_at,
         updated_at=inc.updated_at,
         extraccion_ia=ext_schema,
+        inconsistencias=_inconsistencias_to_schema(inc),
         archivo_url=archivo_url,
     )
 

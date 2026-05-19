@@ -14,6 +14,7 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.extraccion_ia import ExtraccionIA
     from app.models.historial_estado import HistorialEstado
+    from app.models.inconsistencia import Inconsistencia
     from app.models.user import User
 
 
@@ -32,6 +33,7 @@ class IncapacidadEstado(str, enum.Enum):
     COBRADA = "cobrada"
     RECHAZADA = "rechazada"
     PAGADA = "pagada"
+    INCONSISTENCIA_DETECTADA = "inconsistencia_detectada"
 
 
 class Incapacidad(Base):
@@ -117,6 +119,11 @@ class Incapacidad(Base):
     historial_estados: Mapped[list[HistorialEstado]] = relationship(
         "HistorialEstado",
         back_populates="incapacidad",
+    )
+    inconsistencias: Mapped[list[Inconsistencia]] = relationship(
+        "Inconsistencia",
+        back_populates="incapacidad",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:

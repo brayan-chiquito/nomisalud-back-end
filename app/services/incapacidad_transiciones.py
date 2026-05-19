@@ -14,6 +14,13 @@ TRANSICIONES_PATCH_DESDE: dict[IncapacidadEstado, frozenset[IncapacidadEstado]] 
         }
     ),
     IncapacidadEstado.DOC_INCOMPLETA: frozenset({IncapacidadEstado.EN_VERIFICACION}),
+    IncapacidadEstado.INCONSISTENCIA_DETECTADA: frozenset(
+        {
+            IncapacidadEstado.EN_VERIFICACION,
+            IncapacidadEstado.DOC_INCOMPLETA,
+            IncapacidadEstado.RECHAZADA,
+        }
+    ),
     IncapacidadEstado.TRANSCRITA: frozenset({IncapacidadEstado.COBRADA}),
     IncapacidadEstado.COBRADA: frozenset({IncapacidadEstado.PAGADA}),
 }
@@ -23,6 +30,7 @@ ESTADOS_QUE_ADMITEN_VERIFICAR: frozenset[IncapacidadEstado] = frozenset(
     {
         IncapacidadEstado.EN_VERIFICACION,
         IncapacidadEstado.DOC_INCOMPLETA,
+        IncapacidadEstado.INCONSISTENCIA_DETECTADA,
         IncapacidadEstado.PROCESANDO_IA,
     }
 )

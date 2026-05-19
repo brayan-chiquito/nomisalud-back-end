@@ -46,6 +46,10 @@ def _patch_session(inc: MagicMock) -> AsyncMock:
         (IncapacidadEstado.DOC_INCOMPLETA, IncapacidadEstado.EN_VERIFICACION),
         (IncapacidadEstado.TRANSCRITA, IncapacidadEstado.COBRADA),
         (IncapacidadEstado.COBRADA, IncapacidadEstado.PAGADA),
+        (
+            IncapacidadEstado.INCONSISTENCIA_DETECTADA,
+            IncapacidadEstado.EN_VERIFICACION,
+        ),
     ],
 )
 @pytest.mark.asyncio

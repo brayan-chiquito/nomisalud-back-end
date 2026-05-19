@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, selectinload
 
 from app.models.extraccion_ia import ExtraccionIA
 from app.models.incapacidad import Incapacidad
@@ -42,6 +42,7 @@ async def get_incapacidad_detalle(
         )
         .outerjoin(ExtraccionIA, ExtraccionIA.incapacidad_id == Incapacidad.id)
         .outerjoin(Colaborador, Colaborador.id == Incapacidad.colaborador_id)
+        .options(selectinload(Incapacidad.inconsistencias))
         .where(Incapacidad.id == incapacidad_id)
     )
     row = (await db.execute(stmt)).one_or_none()

@@ -41,6 +41,28 @@ async def test_registro_desde_en_verificacion() -> None:
 
 
 @pytest.mark.asyncio
+async def test_registro_desde_inconsistencia_detectada() -> None:
+    inc = MagicMock(spec=Incapacidad)
+    inc.id = uuid.uuid4()
+    inc.estado = IncapacidadEstado.INCONSISTENCIA_DETECTADA
+    inc.documentacion_faltante = None
+
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=inc)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+
+    _, prev = await registrar_documentacion_faltante(
+        db,
+        incapacidad_id=inc.id,
+        actor_id=uuid.uuid4(),
+        documentos=["Epicrisis"],
+    )
+    assert prev == IncapacidadEstado.INCONSISTENCIA_DETECTADA
+    assert inc.estado == IncapacidadEstado.DOC_INCOMPLETA
+
+
+@pytest.mark.asyncio
 async def test_actualiza_lista_si_ya_doc_incompleta() -> None:
     inc = MagicMock()
     inc.estado = IncapacidadEstado.DOC_INCOMPLETA

@@ -86,6 +86,15 @@ class MisIncapacidadListResponse(BaseModel):
     pages: int = Field(..., ge=0)
 
 
+class InconsistenciaDetalleResponse(BaseModel):
+    """Hallazgo persistido asociado al trámite (SCRUM-170)."""
+
+    id: uuid.UUID
+    tipo: str = Field(..., description="Categoría de la inconsistencia detectada")
+    descripcion: str = Field(..., description="Detalle del hallazgo")
+    created_at: datetime
+
+
 class ExtraccionIADetalleResponse(BaseModel):
     """Campos persistidos de la extracción IA (tabla `extraccion_ia`)."""
 
@@ -125,6 +134,12 @@ class IncapacidadDetalleResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     extraccion_ia: ExtraccionIADetalleResponse | None
+    inconsistencias: list[InconsistenciaDetalleResponse] = Field(
+        default_factory=list,
+        description=(
+            "Inconsistencias detectadas por IA (tabla `inconsistencias`)"
+        ),
+    )
     archivo_url: str | None = Field(
         None,
         description=(
