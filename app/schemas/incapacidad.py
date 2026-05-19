@@ -136,9 +136,7 @@ class IncapacidadDetalleResponse(BaseModel):
     extraccion_ia: ExtraccionIADetalleResponse | None
     inconsistencias: list[InconsistenciaDetalleResponse] = Field(
         default_factory=list,
-        description=(
-            "Inconsistencias detectadas por IA (tabla `inconsistencias`)"
-        ),
+        description=("Inconsistencias detectadas por IA (tabla `inconsistencias`)"),
     )
     archivo_url: str | None = Field(
         None,
