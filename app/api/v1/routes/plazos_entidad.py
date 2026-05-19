@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -31,6 +32,10 @@ router = APIRouter(
     tags=["Admin — Plazos por entidad"],
 )
 
+_MSG_PLAZO_NO_ENCONTRADO = "Plazo no encontrado."
+
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 
 def _to_response(row: EntidadPlazo) -> EntidadPlazoResponse:
     return EntidadPlazoResponse(
@@ -46,15 +51,19 @@ def _to_response(row: EntidadPlazo) -> EntidadPlazoResponse:
     )
 
 
+def _http_plazo_no_encontrado() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=_MSG_PLAZO_NO_ENCONTRADO,
+    )
+
+
 @router.get(
     "",
-    response_model=EntidadPlazoListResponse,
     summary="Listar plazos parametrizados",
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
-async def listar_plazos_entidad(
-    db: AsyncSession = Depends(get_db),
-) -> EntidadPlazoListResponse:
+async def listar_plazos_entidad(db: DbSession) -> EntidadPlazoListResponse:
     rows, total = await list_entidad_plazos(db)
     return EntidadPlazoListResponse(
         items=[_to_response(row) for row in rows],
@@ -64,32 +73,28 @@ async def listar_plazos_entidad(
 
 @router.get(
     "/{plazo_id}",
-    response_model=EntidadPlazoResponse,
     summary="Detalle de un plazo",
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
 async def obtener_plazo_entidad(
     plazo_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ) -> EntidadPlazoResponse:
     row = await get_entidad_plazo(db, plazo_id)
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Plazo no encontrado."
-        )
+        raise _http_plazo_no_encontrado()
     return _to_response(row)
 
 
 @router.post(
     "",
-    response_model=EntidadPlazoResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Crear plazo",
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
 async def crear_plazo_entidad(
     body: EntidadPlazoCreateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ) -> EntidadPlazoResponse:
     try:
         row = await create_entidad_plazo(db, body)
@@ -103,20 +108,17 @@ async def crear_plazo_entidad(
 
 @router.put(
     "/{plazo_id}",
-    response_model=EntidadPlazoResponse,
     summary="Actualizar plazo",
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
 async def actualizar_plazo_entidad(
     plazo_id: UUID,
     body: EntidadPlazoUpdateRequest,
-    db: AsyncSession = Depends(get_db),
+    db: DbSession,
 ) -> EntidadPlazoResponse:
     row = await get_entidad_plazo(db, plazo_id)
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Plazo no encontrado."
-        )
+        raise _http_plazo_no_encontrado()
     if not body.model_dump(exclude_unset=True):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -139,15 +141,10 @@ async def actualizar_plazo_entidad(
     summary="Eliminar plazo",
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
-async def eliminar_plazo_entidad(
-    plazo_id: UUID,
-    db: AsyncSession = Depends(get_db),
-) -> Response:
+async def eliminar_plazo_entidad(plazo_id: UUID, db: DbSession) -> Response:
     row = await get_entidad_plazo(db, plazo_id)
     if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Plazo no encontrado."
-        )
+        raise _http_plazo_no_encontrado()
     await delete_entidad_plazo(db, row)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
