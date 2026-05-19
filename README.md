@@ -20,7 +20,11 @@ cp .env.example .env
 # 2. Construir y levantar los contenedores
 docker compose up --build
 
-# 3. La API estará disponible en:
+# 3. Migraciones + datos de prueba (usuarios y plazos; un solo comando)
+docker compose exec api alembic upgrade head
+docker compose exec api python -m scripts.seed
+
+# 4. La API estará disponible en:
 #    http://localhost:8000
 #    Docs Swagger: http://localhost:8000/docs
 #    Docs ReDoc:   http://localhost:8000/redoc
@@ -43,6 +47,11 @@ docker compose up --build
 | PATCH  | `/api/v1/incapacidades/{id}/estado` | Sí | Cambio de estado con máquina de estados + `historial_estados` (solo RRHH/admin) |
 | PUT    | `/api/v1/incapacidades/{id}/documentacion-faltante` | Sí | Registra lista de documentos faltantes y pasa a `doc_incompleta` (RRHH/admin) |
 | POST   | `/api/v1/incapacidades/upload` | Sí   | Carga PDF/JPG/PNG, crea trámite y encola extracción IA (Gemini 2.5 Flash) |
+| GET    | `/api/v1/admin/plazos-entidad` | Sí   | Listar plazos por entidad y tipo (solo `admin`) |
+| GET    | `/api/v1/admin/plazos-entidad/{id}` | Sí | Detalle de un plazo parametrizado (solo `admin`) |
+| POST   | `/api/v1/admin/plazos-entidad` | Sí   | Crear configuración de plazo (solo `admin`) |
+| PUT    | `/api/v1/admin/plazos-entidad/{id}` | Sí | Actualizar plazo (solo `admin`) |
+| DELETE | `/api/v1/admin/plazos-entidad/{id}` | Sí | Eliminar plazo (solo `admin`) |
 | GET    | `/api/v1/demo/me`              | Sí   | [DEMO] Payload del JWT decodificado |
 | GET    | `/api/v1/demo/colaborador`     | Sí   | [DEMO] Acceso por cualquier rol |
 | GET    | `/api/v1/demo/rrhh`            | Sí   | [DEMO] Acceso RRHH/admin |
@@ -320,6 +329,58 @@ Además, para el listado de trámites: **`INCAPACIDADES_PAGE_SIZE`** (por defect
 
 Sin `GEMINI_API_KEY`, el archivo se guarda y el trámite puede quedar en flujo de error de extracción al ejecutarse el job.
 
+### Plazos por entidad (SCRUM-173 / SCRUM-174)
+
+Parametrización de **plazos límite** y **días de alerta** según entidad prestadora y tipo de incapacidad. Los valores se almacenan en la tabla **`entidades_plazos`** con normalización interna a **días calendario** (`dias_limite`).
+
+| Campo API / BD | Descripción |
+|---------------|-------------|
+| `entidad_nombre` | Nombre de la EPS, ARL, IPS, etc. |
+| `tipo_incapacidad` | Clasificación (`accidente_transito`, `accidente_trabajo`, `general`, …) |
+| `valor_limite` + `unidad_limite` | Plazo expresado en `dias`, `meses` o `anos` |
+| `dias_limite` | Plazo convertido a días (meses × 30, años × 365) |
+| `dias_alerta` | Anticipación en días para alertar antes del vencimiento |
+
+**Unicidad:** una sola fila por par `(entidad_nombre, tipo_incapacidad)`.
+
+**Registros iniciales** (seed obligatorio SCRUM-173):
+
+| Entidad | Tipo | Plazo | Días normalizados |
+|---------|------|-------|-------------------|
+| Salud Total | `accidente_transito` | 15 días | 15 |
+| SURA EPS | `general` | 150 días calendario | 150 |
+| Nueva EPS | `general` | 12 meses | 360 |
+| SOS | `general` | 12 meses | 360 |
+| Asmet Salud | `general` | 12 meses | 360 |
+| Sanitas | `general` | 3 años | 1095 |
+| ARL SURA | `accidente_trabajo` | 12 meses | 360 |
+
+**Migración y seed:** ver sección [Seed de datos de prueba](#seed-de-datos-de-prueba). Tras `alembic upgrade head`, usa `python -m scripts.seed` (usuarios **y** plazos en una sola ejecución).
+
+**CRUD admin** (panel de administración — el front consume estos endpoints):
+
+| Método | Ruta | Cuerpo / respuesta |
+|--------|------|-------------------|
+| `GET` | `/api/v1/admin/plazos-entidad` | `{ "items": [...], "total": N }` |
+| `GET` | `/api/v1/admin/plazos-entidad/{id}` | Objeto plazo |
+| `POST` | `/api/v1/admin/plazos-entidad` | JSON create → `201` |
+| `PUT` | `/api/v1/admin/plazos-entidad/{id}` | JSON parcial (al menos un campo) |
+| `DELETE` | `/api/v1/admin/plazos-entidad/{id}` | `204` sin cuerpo |
+
+Ejemplo de creación:
+
+```json
+{
+  "entidad_nombre": "Salud Total",
+  "tipo_incapacidad": "accidente_transito",
+  "valor_limite": 15,
+  "unidad_limite": "dias",
+  "dias_alerta": 3
+}
+```
+
+Errores habituales: **403** (no admin), **404** (id inexistente), **409** (duplicado entidad+tipo), **422** (`dias_alerta` mayor que `dias_limite` o `valor_limite` inválido).
+
 ### OCR con Tesseract (SCRUM-165)
 
 Dependencias Python: **`Pillow`** y **`pytesseract`** (`requirements.txt`). En Docker, el `Dockerfile` instala los paquetes de sistema **`tesseract-ocr`**, **`tesseract-ocr-eng`** y **`tesseract-ocr-spa`**.
@@ -478,7 +539,24 @@ curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/est
 
 Para forzar **`doc_incompleta`** en pruebas sin RRHH: sube un archivo con extracción fallida (por ejemplo sin `GEMINI_API_KEY` en `.env`) o espera el error del job; el detalle/listado mostrará `estado: doc_incompleta`.
 
+#### Admin — plazos por entidad
+
+```bash
+TOKEN="token_de_admin@nomisalud.com"
+
+# Listar
+curl -s "http://localhost:8000/api/v1/admin/plazos-entidad" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Crear
+curl -s -X POST "http://localhost:8000/api/v1/admin/plazos-entidad" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"entidad_nombre":"Salud Total","tipo_incapacidad":"accidente_transito","valor_limite":15,"unidad_limite":"dias","dias_alerta":3}'
+```
+
 ---
+
 
 ## Estructura del proyecto
 
@@ -498,12 +576,14 @@ nomisalud-back-end/
 │   │           ├── auth.py
 │   │           ├── demo.py
 │   │           ├── health.py
-│   │           └── incapacidades.py  # listado, detalle, archivo, verificar, patch estado, upload
+│   │           ├── incapacidades.py  # listado, detalle, archivo, verificar, patch estado, upload
+│   │           └── plazos_entidad.py # CRUD admin plazos por entidad
 │   ├── models/
 │   │   ├── user.py
 │   │   ├── incapacidad.py
 │   │   ├── extraccion_ia.py  # Resultado IA (JSONB + raw_response)
 │   │   ├── inconsistencia.py # Hallazgos IA (tipo + descripcion, FK incapacidad)
+│   │   ├── entidad_plazo.py  # Plazos límite por entidad/tipo (SCRUM-173)
 │   │   └── historial_estado.py
 │   ├── prompts/
 │   │   └── Nomisalud_prompt_extraccion.md  # Prompt Gemini (versionado en git)
@@ -519,13 +599,16 @@ nomisalud-back-end/
 │   │   ├── incapacidad_estado_service.py   # PATCH estado + máquina de estados
 │   │   ├── incapacidad_documentacion_service.py  # PUT documentación faltante
 │   │   ├── incapacidad_verify_service.py   # Verificación manual RRHH (PUT verificar)
+│   │   ├── entidad_plazo_service.py        # CRUD plazos por entidad
+│   │   ├── plazo_unidades.py               # Normalización días/meses/años
 │   │   ├── incapacidad_storage.py
 │   │   └── incapacidad_upload_service.py
 │   └── repositories/
 ├── alembic/                  # Migraciones de base de datos
-│   └── versions/             # users, incapacidades, extraccion_ia, inconsistencias, …
+│   └── versions/             # users, incapacidades, extraccion_ia, inconsistencias, plazos, …
 ├── scripts/
-│   └── seed.py               # Seed de usuarios de prueba
+│   ├── seed.py                 # Orquestador: usuarios → plazos (run_all_seeds)
+│   └── seed_plazos_entidad.py    # Plazos reglamentarios (también invocado desde seed.py)
 ├── tests/
 ├── .env
 ├── .env.example
@@ -538,7 +621,7 @@ nomisalud-back-end/
 
 ## Migraciones con Alembic
 
-El historial de migraciones cubre el dominio de usuarios, las tablas **incapacidades**, **extraccion_ia**, **inconsistencias**, **historial_estados** (incl. estado `inconsistencia_detectada` en el enum) y demás cambios en `alembic/versions`. Tras clonar o actualizar código, ejecuta siempre `upgrade head` antes de probar uploads con IA.
+El historial de migraciones cubre el dominio de usuarios, las tablas **incapacidades**, **extraccion_ia**, **inconsistencias**, **entidades_plazos**, **historial_estados** (incl. estado `inconsistencia_detectada` en el enum) y demás cambios en `alembic/versions`. Tras clonar o actualizar código, ejecuta siempre `upgrade head` y el seed antes de probar uploads con IA o el panel de plazos.
 
 ```bash
 # Aplicar todas las migraciones pendientes
@@ -555,20 +638,74 @@ docker compose exec api alembic downgrade -1
 
 ## Seed de datos de prueba
 
-Inserta un usuario por cada rol disponible (idempotente: omite los que ya existen).
+Los scripts son **idempotentes**: si un email o un par `(entidad_nombre, tipo_incapacidad)` ya existe, se omite con `[SKIP]`.
+
+### Comando recomendado (ejecuta los dos scripts)
 
 ```bash
+docker compose exec api alembic upgrade head
 docker compose exec api python -m scripts.seed
 ```
 
-Usuarios generados:
+`python -m scripts.seed` llama internamente a **`run_all_seeds()`** en este orden:
 
-| Email                          | Rol               | Contraseña              |
-|--------------------------------|-------------------|-------------------------|
-| colaborador@nomisalud.com      | colaborador       | Colaborador123!         |
-| auxiliar.rrhh@nomisalud.com    | auxiliar_rrhh     | AuxiliarRRHH123!        |
-| coordinador.rrhh@nomisalud.com | coordinador_rrhh  | CoordinadorRRHH123!     |
-| admin@nomisalud.com            | admin             | Admin123!               |
+| Orden | Script | Qué inserta |
+|-------|--------|-------------|
+| 1 | `scripts/seed.py` | **13 usuarios** de prueba (colaboradores por EPS, RRHH y admins) |
+| 2 | `scripts/seed_plazos_entidad.py` | **7 plazos** reglamentarios en `entidades_plazos` |
+
+No hace falta lanzar los dos archivos por separado si usas el comando de arriba.
+
+### Solo plazos (usuarios ya creados)
+
+```bash
+docker compose exec api python -m scripts.seed_plazos_entidad
+```
+
+### Solo usuarios (sin plazos)
+
+```bash
+docker compose exec api python -c "import asyncio; from scripts.seed import seed; asyncio.run(seed())"
+```
+
+### Usuarios de prueba (`scripts/seed.py`)
+
+Contraseña por rol: `Colaborador123!` · `AuxiliarRRHH123!` · `CoordinadorRRHH123!` · `Admin123!`
+
+| Email | Rol | Contraseña | Notas |
+|-------|-----|------------|--------|
+| colaborador@nomisalud.com | colaborador | Colaborador123! | Perfil demo base |
+| juan.perez@nomisalud.com | colaborador | Colaborador123! | EPS SURA |
+| laura.martinez@nomisalud.com | colaborador | Colaborador123! | Nueva EPS |
+| pedro.gomez@nomisalud.com | colaborador | Colaborador123! | Sanitas |
+| ana.torres@nomisalud.com | colaborador | Colaborador123! | Salud Total |
+| diego.ramirez@nomisalud.com | colaborador | Colaborador123! | SOS |
+| carolina.diaz@nomisalud.com | colaborador | Colaborador123! | Asmet Salud |
+| auxiliar.rrhh@nomisalud.com | auxiliar_rrhh | AuxiliarRRHH123! | |
+| auxiliar2.rrhh@nomisalud.com | auxiliar_rrhh | AuxiliarRRHH123! | |
+| coordinador.rrhh@nomisalud.com | coordinador_rrhh | CoordinadorRRHH123! | |
+| coordinador2.rrhh@nomisalud.com | coordinador_rrhh | CoordinadorRRHH123! | |
+| admin@nomisalud.com | admin | Admin123! | Panel plazos y administración |
+| admin.soporte@nomisalud.com | admin | Admin123! | Segundo admin de prueba |
+
+### Plazos iniciales (`scripts/seed_plazos_entidad.py`)
+
+| Entidad | Tipo | Plazo | `dias_limite` |
+|---------|------|-------|---------------|
+| Salud Total | `accidente_transito` | 15 días | 15 |
+| SURA EPS | `general` | 150 días | 150 |
+| Nueva EPS | `general` | 12 meses | 360 |
+| SOS | `general` | 12 meses | 360 |
+| Asmet Salud | `general` | 12 meses | 360 |
+| Sanitas | `general` | 3 años | 1095 |
+| ARL SURA | `accidente_trabajo` | 12 meses | 360 |
+
+Verificar en BD:
+
+```bash
+docker compose exec db psql -U nomisalud -d nomisalud_db -c "SELECT COUNT(*) FROM users;"
+docker compose exec db psql -U nomisalud -d nomisalud_db -c "SELECT entidad_nombre, tipo_incapacidad, dias_limite FROM entidades_plazos;"
+```
 
 ---
 
@@ -627,6 +764,8 @@ docker compose exec db psql -U nomisalud -d nomisalud_db
 \d users                       -- estructura de la tabla users
 \d extraccion_ia               -- extracción IA vinculada a incapacidades (1:1)
 \d inconsistencias             -- hallazgos por incapacidad (1:N)
+\d entidades_plazos            -- plazos por entidad y tipo
+SELECT entidad_nombre, tipo_incapacidad, dias_limite, dias_alerta FROM entidades_plazos;
 SELECT id, estado FROM incapacidades ORDER BY created_at DESC LIMIT 5;
 SELECT tipo, descripcion FROM inconsistencias WHERE incapacidad_id = 'UUID-del-tramite';
 SELECT * FROM users;           -- ver registros

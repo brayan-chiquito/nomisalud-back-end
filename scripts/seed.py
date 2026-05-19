@@ -1,5 +1,8 @@
 """
-Script de seed: inserta un usuario de prueba por cada rol si aún no existen.
+Script de seed: inserta usuarios de prueba por rol (idempotente).
+
+Incluye colaboradores adicionales afiliados a distintas EPS/ARL para pruebas
+de listados, uploads y plazos por entidad.
 
 Uso:
     python -m scripts.seed
@@ -67,6 +70,114 @@ SEED_USERS: list[dict] = [
         "eps_afiliacion": "EPS Salud Demo",
         "arl_afiliacion": "ARL Riesgos Demo",
     },
+    {
+        "email": "juan.perez@nomisalud.com",
+        "password": "Colaborador123!",
+        "role": UserRole.COLABORADOR,
+        "nombre_completo": "Juan Pérez García",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000005",
+        "area": "Logística",
+        "cargo": "Analista de operaciones",
+        "eps_afiliacion": "SURA EPS",
+        "arl_afiliacion": "ARL SURA",
+    },
+    {
+        "email": "laura.martinez@nomisalud.com",
+        "password": "Colaborador123!",
+        "role": UserRole.COLABORADOR,
+        "nombre_completo": "Laura Martínez Ruiz",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000006",
+        "area": "Comercial",
+        "cargo": "Ejecutiva de cuenta",
+        "eps_afiliacion": "Nueva EPS",
+        "arl_afiliacion": "ARL SURA",
+    },
+    {
+        "email": "pedro.gomez@nomisalud.com",
+        "password": "Colaborador123!",
+        "role": UserRole.COLABORADOR,
+        "nombre_completo": "Pedro Gómez López",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000007",
+        "area": "Producción",
+        "cargo": "Supervisor de planta",
+        "eps_afiliacion": "Sanitas",
+        "arl_afiliacion": "ARL Colmena",
+    },
+    {
+        "email": "ana.torres@nomisalud.com",
+        "password": "Colaborador123!",
+        "role": UserRole.COLABORADOR,
+        "nombre_completo": "Ana Torres Vargas",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000008",
+        "area": "Servicios",
+        "cargo": "Coordinadora de campo",
+        "eps_afiliacion": "Salud Total",
+        "arl_afiliacion": "ARL SURA",
+    },
+    {
+        "email": "diego.ramirez@nomisalud.com",
+        "password": "Colaborador123!",
+        "role": UserRole.COLABORADOR,
+        "nombre_completo": "Diego Ramírez Castro",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000009",
+        "area": "Mantenimiento",
+        "cargo": "Técnico especializado",
+        "eps_afiliacion": "SOS",
+        "arl_afiliacion": "ARL Positiva",
+    },
+    {
+        "email": "carolina.diaz@nomisalud.com",
+        "password": "Colaborador123!",
+        "role": UserRole.COLABORADOR,
+        "nombre_completo": "Carolina Díaz Moreno",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000010",
+        "area": "Administración",
+        "cargo": "Asistente administrativa",
+        "eps_afiliacion": "Asmet Salud",
+        "arl_afiliacion": "ARL SURA",
+    },
+    {
+        "email": "auxiliar2.rrhh@nomisalud.com",
+        "password": "AuxiliarRRHH123!",
+        "role": UserRole.AUXILIAR_RRHH,
+        "nombre_completo": "Sofía Auxiliar RRHH",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000011",
+        "area": "Recursos Humanos",
+        "cargo": "Auxiliar de nómina",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
+    },
+    {
+        "email": "coordinador2.rrhh@nomisalud.com",
+        "password": "CoordinadorRRHH123!",
+        "role": UserRole.COORDINADOR_RRHH,
+        "nombre_completo": "Luis Coordinador RRHH",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000012",
+        "area": "Recursos Humanos",
+        "cargo": "Coordinador de incapacidades",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
+    },
+    {
+        "email": "admin.soporte@nomisalud.com",
+        "password": "Admin123!",
+        "role": UserRole.ADMIN,
+        "nombre_completo": "Patricia Admin Soporte",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000013",
+        "area": "Tecnología",
+        "cargo": "Administradora de plataforma",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
+    },
 ]
 
 
@@ -101,8 +212,15 @@ async def seed() -> None:
 
         await session.commit()
 
-    print("\nSeed completado.")
+    print("\nSeed de usuarios completado.")
+
+
+async def run_all_seeds() -> None:
+    await seed()
+    from scripts.seed_plazos_entidad import seed_plazos_entidad
+
+    await seed_plazos_entidad()
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    asyncio.run(run_all_seeds())
