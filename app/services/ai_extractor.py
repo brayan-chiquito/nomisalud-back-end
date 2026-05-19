@@ -53,9 +53,28 @@ _ROOT_KEYS: Final[tuple[str, ...]] = (
     "validaciones",
 )
 
+_INCONSISTENCIA_TIPOS_VALIDOS: Final[frozenset[str]] = frozenset(
+    {
+        "fechas",
+        "dias",
+        "genero_tipo",
+        "identificacion",
+        "legibilidad",
+        "dato_faltante",
+    }
+)
+
 
 class GeminiExtractionError(Exception):
     """Error controlado al extraer con Gemini (respuesta inválida o API)."""
+
+
+@dataclass(frozen=True)
+class InconsistenciaExtraida:
+    """Hallazgo estructurado devuelto por Gemini (antes de persistir en BD)."""
+
+    tipo: str
+    descripcion: str
 
 
 @dataclass(frozen=True)
@@ -64,6 +83,7 @@ class LocalExtractionResult:
 
     normalized: dict[str, Any | None]
     raw_response: str
+    inconsistencias: tuple[InconsistenciaExtraida, ...] = ()
 
 
 def _guess_mime_type(path: Path) -> str:
@@ -142,6 +162,37 @@ def normalize_extraccion_json(data: Any) -> dict[str, Any | None]:
     return {k: data.get(k) for k in _ROOT_KEYS}
 
 
+def parse_inconsistencias_desde_extraccion(
+    data: Any,
+) -> tuple[InconsistenciaExtraida, ...]:
+    """
+    Extrae y normaliza el array ``inconsistencias`` del JSON de Gemini.
+
+    Solo conserva entradas con ``tipo`` reconocido y ``descripcion`` no vacía.
+    """
+    if not isinstance(data, dict):
+        return ()
+    raw = data.get("inconsistencias")
+    if not isinstance(raw, list):
+        return ()
+    out: list[InconsistenciaExtraida] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        tipo_raw = item.get("tipo")
+        desc_raw = item.get("descripcion")
+        if not isinstance(tipo_raw, str) or not isinstance(desc_raw, str):
+            continue
+        tipo = tipo_raw.strip().lower()
+        descripcion = desc_raw.strip()
+        if not tipo or not descripcion:
+            continue
+        if tipo not in _INCONSISTENCIA_TIPOS_VALIDOS:
+            continue
+        out.append(InconsistenciaExtraida(tipo=tipo, descripcion=descripcion))
+    return tuple(out)
+
+
 def _strip_json_fences(text: str) -> str:
     """
     Quita fences tipo markdown sin regex ambiguos (evita ReDoS, Sonar S5852).
@@ -207,6 +258,7 @@ def _local_extraction_from_gemini_payload(
     return LocalExtractionResult(
         normalized=normalize_extraccion_json(parsed),
         raw_response=raw_response,
+        inconsistencias=parse_inconsistencias_desde_extraccion(parsed),
     )
 
 

@@ -15,7 +15,12 @@ from app.core.database import AsyncSessionLocal
 from app.models.extraccion_ia import ExtraccionIA
 from app.models.historial_estado import HistorialEstado
 from app.models.incapacidad import Incapacidad, IncapacidadEstado
-from app.services.ai_extractor import GeminiExtractionError, extract_from_local_file
+from app.models.inconsistencia import Inconsistencia
+from app.services.ai_extractor import (
+    GeminiExtractionError,
+    InconsistenciaExtraida,
+    extract_from_local_file,
+)
 from app.services.datos_extraidos_ui import enrich_datos_extraidos_for_ui
 from app.services.ocr_processor import OcrProcessorError, procesar_documento
 
@@ -126,12 +131,28 @@ async def _obtener_texto_ocr_archivo(path: Path) -> str | None:
     return None
 
 
+def _persistir_inconsistencias(
+    db: AsyncSession,
+    incapacidad_id: uuid.UUID,
+    hallazgos: tuple[InconsistenciaExtraida, ...],
+) -> None:
+    for hallazgo in hallazgos:
+        db.add(
+            Inconsistencia(
+                incapacidad_id=incapacidad_id,
+                tipo=hallazgo.tipo,
+                descripcion=hallazgo.descripcion,
+            )
+        )
+
+
 async def _marcar_exito_extraccion(
     db: AsyncSession,
     incap: Incapacidad,
     actor_user_id: uuid.UUID,
     result: dict[str, object | None],
     raw_response: str,
+    inconsistencias: tuple[InconsistenciaExtraida, ...] = (),
 ) -> None:
     existing = await db.scalar(
         select(ExtraccionIA.id).where(ExtraccionIA.incapacidad_id == incap.id)
@@ -146,7 +167,13 @@ async def _marcar_exito_extraccion(
     datos, validaciones = _split_extraccion_payload(result)
     datos = enrich_datos_extraidos_for_ui(datos)
     prev = incap.estado
-    incap.estado = IncapacidadEstado.EN_VERIFICACION
+    tiene_inconsistencias = bool(inconsistencias)
+    estado_destino = (
+        IncapacidadEstado.INCONSISTENCIA_DETECTADA
+        if tiene_inconsistencias
+        else IncapacidadEstado.EN_VERIFICACION
+    )
+    incap.estado = estado_destino
     db.add(
         ExtraccionIA(
             incapacidad_id=incap.id,
@@ -157,13 +184,20 @@ async def _marcar_exito_extraccion(
             modelo="gemini-2.5-flash",
         )
     )
+    if tiene_inconsistencias:
+        _persistir_inconsistencias(db, incap.id, inconsistencias)
+    obs = (
+        f"Extracción IA completada con {len(inconsistencias)} inconsistencia(s)."
+        if tiene_inconsistencias
+        else "Extracción IA completada."
+    )
     _append_historial(
         db,
         incapacidad_id=incap.id,
         anterior=prev,
-        nuevo=IncapacidadEstado.EN_VERIFICACION,
+        nuevo=estado_destino,
         user_id=actor_user_id,
-        observacion="Extracción IA completada.",
+        observacion=obs,
     )
 
 
@@ -226,6 +260,7 @@ async def run_incapacidad_extraction_job(
                 actor_user_id,
                 outcome.normalized,
                 outcome.raw_response,
+                outcome.inconsistencias,
             )
             await db.commit()
         except Exception:

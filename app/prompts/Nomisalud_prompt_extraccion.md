@@ -100,7 +100,13 @@ salida usando null si no aplican):
     "fechas_ok": true | false | null,
     "dias_ok": true | false | null,
     "observaciones": []
-  }
+  },
+  "inconsistencias": [
+    {
+      "tipo": "fechas | dias | genero_tipo | identificacion | legibilidad | dato_faltante",
+      "descripcion": "STRING — detalle concreto del hallazgo detectado"
+    }
+  ]
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -140,6 +146,29 @@ REGLA 4 — observaciones:
     "Total de días declarado (10) no coincide con el calculado (11)"
     "Documento de baja calidad — algunos campos pueden ser imprecisos"
     "Parece prórroga pero numero_prorroga no está indicado"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INCONSISTENCIAS ESTRUCTURADAS (obligatorio)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Además de "validaciones", debes evaluar el documento y llenar SIEMPRE el array
+"inconsistencias". Cada elemento es un objeto con "tipo" y "descripcion".
+
+Evalúa obligatoriamente estas categorías (mínimo tres tipos distintos cuando aplique):
+
+1. tipo = "fechas" — fechas incoherentes, futuras sin justificación, expedición posterior al inicio, fin <= inicio.
+2. tipo = "dias" — total_dias no coincide con (fecha_fin - fecha_inicio) + 1, o días declarados contradictorios.
+3. tipo = "genero_tipo" — incompatibilidad entre incapacidad.tipo y paciente.genero (maternidad/paternidad).
+4. tipo = "identificacion" — documento inválido, longitud atípica, caracteres no numéricos, tipo vs número incoherente.
+5. tipo = "legibilidad" — documento escaneado ilegible, campos críticos no legibles, baja calidad que impide certeza.
+6. tipo = "dato_faltante" — campo crítico de negocio ausente cuando debería estar visible (nombre, identificación, fechas, días, entidad).
+
+Reglas del array "inconsistencias":
+- Incluye UNA entrada por cada anomalía real detectada (puede haber varias del mismo tipo si son hechos distintos).
+- Usa solo los valores de "tipo" listados arriba (en minúsculas, sin espacios).
+- "descripcion" debe ser específica y citar valores o campos involucrados.
+- Si no hay ninguna anomalía tras revisar las seis categorías, devuelve "inconsistencias": [].
+- No dupliques en "inconsistencias" lo que ya quedó solo como observación en "validaciones"; prioriza el reporte estructurado aquí cuando sea una anomalía de negocio.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CASOS ESPECIALES COLOMBIA

@@ -37,7 +37,7 @@ docker compose up --build
 | POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
 | GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye nombre y email del colaborador y campos de entidad desde extracción IA |
 | GET    | `/api/v1/incapacidades/mias`   | Sí   | Mis trámites (solo `colaborador`): filtro estricto por JWT; cada ítem incluye `estado` y `updated_at` |
-| GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: registro principal, objeto `extraccion_ia` completo y `archivo_url` para descarga |
+| GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: `extraccion_ia`, lista `inconsistencias` (hallazgos IA) y `archivo_url` |
 | GET    | `/api/v1/incapacidades/{id}/archivo` | Sí | Descarga del documento adjunto (mismo JWT que el detalle; ruta validada bajo `UPLOAD_STORAGE_DIR`) |
 | PUT    | `/api/v1/incapacidades/{id}/verificar` | Sí | Verificación humana RRHH/admin: `confirmar` o `rechazar` (actualiza extracción, estado e historial) |
 | PATCH  | `/api/v1/incapacidades/{id}/estado` | Sí | Cambio de estado con máquina de estados + `historial_estados` (solo RRHH/admin) |
@@ -63,7 +63,8 @@ Cuerpo JSON (201 Created):
 
 - **`radicado`**: identificador único del trámite (máx. 20 caracteres).
 - **`estado`**: al cerrar la petición el trámite queda en **`procesando_ia`**. La API **no espera** a Gemini: la extracción corre en **segundo plano** (`BackgroundTasks`).
-- Tras un extracción **correcta**, el estado pasa a **`en_verificacion`** y se crea la fila en **`extraccion_ia`** con los campos del modelo: `datos_extraidos`, `campos_corregidos`, `validaciones`, `raw_response`, `api_usada`, `modelo`, `tokens_input`, `tokens_output`, `costo_usd`, `calidad_doc`, `verificado_por`, `verificado_en`, `created_at`.
+- Tras un extracción **correcta** sin hallazgos estructurados, el estado pasa a **`en_verificacion`** y se crea la fila en **`extraccion_ia`** (`datos_extraidos`, `validaciones`, `raw_response`, `modelo`, etc.).
+- Si Gemini reporta **inconsistencias** en el array `inconsistencias` del JSON (SCRUM-169), el estado queda en **`inconsistencia_detectada`**, se persisten filas en la tabla **`inconsistencias`** (`tipo`, `descripcion`) y también existe **`extraccion_ia`** con los datos extraídos.
 - Si la extracción **falla** (archivo, API, JSON inválido…), el estado suele quedar en **`doc_incompleta`** con detalle en `documentacion_faltante`.
 
 Roles permitidos en upload: `colaborador`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin`. Un colaborador solo puede cargar para sí mismo salvo que RRHH/admin indiquen `colaborador_id` en el formulario.
@@ -82,7 +83,7 @@ Parámetros de consulta (todos opcionales; si omites filtros, se listan todos lo
 - Filtra por el estado persistido del trámite.
 - Debe coincidir **exactamente** (tras normalizar espacios y minúsculas) con **uno** de estos valores:
 
-`recibida` · `procesando_ia` · `en_verificacion` · `doc_incompleta` · `transcrita` · `cobrada` · `rechazada` · `pagada`
+`recibida` · `procesando_ia` · `en_verificacion` · `inconsistencia_detectada` · `doc_incompleta` · `transcrita` · `cobrada` · `rechazada` · `pagada`
 
 - Cualquier otro valor produce **422** con mensaje de estado inválido.
 
@@ -150,7 +151,7 @@ Cuerpo JSON (200 OK):
 - **404** si el `id` no existe.
 - **403** si un colaborador intenta ver el trámite de otra persona.
 
-La respuesta incluye los campos del trámite (radicado, estado, colaborador, archivo, fechas, `documentacion_faltante`, …), nombre y email del colaborador desde `users`, el bloque anidado **`extraccion_ia`** con todos los campos persistidos en la tabla `extraccion_ia` (o `null` si aún no hay extracción), y **`archivo_url`**: URL absoluta hacia `GET /api/v1/incapacidades/{id}/archivo` cuando hay `archivo_path` guardado; si no, `null`.
+La respuesta incluye los campos del trámite (radicado, estado, colaborador, archivo, fechas, `documentacion_faltante`, …), nombre y email del colaborador desde `users`, el bloque anidado **`extraccion_ia`** con todos los campos persistidos en la tabla `extraccion_ia` (o `null` si aún no hay extracción), el array **`inconsistencias`** (registros de la tabla homónima: `id`, `tipo`, `descripcion`, `created_at`; vacío si no hay hallazgos persistidos), y **`archivo_url`**: URL absoluta hacia `GET /api/v1/incapacidades/{id}/archivo` cuando hay `archivo_path` guardado; si no, `null`.
 
 En **`extraccion_ia.datos_extraidos`** la API fusiona el JSON del prompt de IA (`paciente`, `incapacidad`, `diagnostico` anidado, `entidad`, …) con campos pensados para el **dashboard**: objeto **`colaborador`** (`nombre_completo`, `documento` desde `paciente`) y en **`incapacidad`** strings **`dias`** (desde `total_dias`), **`origen`** (etiqueta legible según `tipo`), **`codigo_cie10`**, **`diagnostico`** (descripción) y **`diagnostico_principal`** (código y descripción combinados). Así el front puede enlazar campos simples sin renderizar el objeto `diagnostico` como `[object Object]`. Los bloques originales del modelo (`paciente`, `diagnostico`, …) se mantienen.
 
@@ -164,17 +165,21 @@ En **`extraccion_ia.datos_extraidos`** la API fusiona el JSON del prompt de IA (
 
 Valores posibles del campo `estado` en `incapacidades`:
 
-`recibida` · `procesando_ia` · `en_verificacion` · `doc_incompleta` · `transcrita` · `cobrada` · `rechazada` · `pagada`
+`recibida` · `procesando_ia` · `en_verificacion` · `inconsistencia_detectada` · `doc_incompleta` · `transcrita` · `cobrada` · `rechazada` · `pagada`
 
 ```mermaid
 stateDiagram-v2
     [*] --> recibida: POST upload
     recibida --> procesando_ia: automático
-    procesando_ia --> en_verificacion: extracción IA OK
+    procesando_ia --> en_verificacion: extracción OK sin inconsistencias
+    procesando_ia --> inconsistencia_detectada: extracción OK con hallazgos
     procesando_ia --> doc_incompleta: extracción IA falla
     en_verificacion --> transcrita: PATCH estado
     en_verificacion --> doc_incompleta: PUT doc. faltante o PATCH
     en_verificacion --> rechazada: PUT verificar o PATCH
+    inconsistencia_detectada --> en_verificacion: PATCH estado
+    inconsistencia_detectada --> doc_incompleta: PUT doc. faltante o PATCH
+    inconsistencia_detectada --> rechazada: PUT verificar o PATCH
     doc_incompleta --> en_verificacion: PATCH estado
     transcrita --> cobrada: PATCH estado
     cobrada --> pagada: PATCH estado
@@ -186,8 +191,9 @@ stateDiagram-v2
 |--------|----------------|----------------------|------------------|
 | **`recibida`** | Trámite recién creado en BD | Ocurre un instante al registrar el upload; en la práctica la API responde ya en el siguiente estado | Automático (`POST …/upload`) |
 | **`procesando_ia`** | Archivo guardado; extracción Gemini + OCR en segundo plano | Respuesta inmediata del upload (`201` con `"estado":"procesando_ia"`) | Automático |
-| **`en_verificacion`** | Extracción IA terminó bien; RRHH debe revisar | Job en background tras upload exitoso (Gemini + fila `extraccion_ia`) | Automático |
-| **`doc_incompleta`** | Faltan documentos o falló la lectura del archivo | **A)** Job de extracción falla (sin `GEMINI_API_KEY`, error API, archivo ilegible, etc.) → `documentacion_faltante` con prefijo `extraccion_ia:…` · **B)** RRHH registra lista de pendientes desde `en_verificacion` · **C)** `PATCH` manual a `doc_incompleta` desde `en_verificacion` | Automático o **RRHH** → `PUT …/documentacion-faltante` o `PATCH …/estado` |
+| **`en_verificacion`** | Extracción IA terminó bien y sin inconsistencias estructuradas; RRHH debe revisar | Job en background tras upload (Gemini devuelve `inconsistencias: []`) | Automático |
+| **`inconsistencia_detectada`** | La IA encontró anomalías de negocio (fechas, días, género/tipo, identificación, legibilidad, datos faltantes) | Job de extracción con array `inconsistencias` no vacío; se guardan filas en tabla **`inconsistencias`** | Automático |
+| **`doc_incompleta`** | Faltan documentos o falló la lectura del archivo | **A)** Job de extracción falla → `extraccion_ia:…` en `documentacion_faltante` · **B)** RRHH registra pendientes desde `en_verificacion` o `inconsistencia_detectada` · **C)** `PATCH` manual | Automático o **RRHH** |
 | **`transcrita`** | Trámite aprobado para el flujo de cobro | RRHH aprueba después de revisar datos | **RRHH** → `PATCH …/estado` con `"estado":"transcrita"` (solo desde `en_verificacion`) |
 | **`cobrada`** | Cobro registrado ante la entidad | Avance administrativo post-transcripción | **RRHH** → `PATCH …/estado` con `"estado":"cobrada"` (solo desde `transcrita`) |
 | **`pagada`** | Pago al colaborador completado | Estado terminal del ciclo de pago | **RRHH** → `PATCH …/estado` con `"estado":"pagada"` (solo desde `cobrada`) |
@@ -200,8 +206,9 @@ stateDiagram-v2
 - Desde **`rechazada`**, **`pagada`**, **`cobrada`** o **`transcrita`** no se puede volver atrás con los endpoints actuales.
 - Para **documentación incompleta con lista explícita** de pendientes, preferir **`PUT …/documentacion-faltante`** (rellena `documentacion_faltante` y pasa a `doc_incompleta`).
 
-**Secuencia feliz típica:**  
-`upload` → `procesando_ia` → `en_verificacion` → (`PUT verificar` `confirmar` opcional) → `PATCH` `transcrita` → `PATCH` `cobrada` → `PATCH` `pagada`.
+**Secuencias típicas:**  
+- Sin hallazgos: `upload` → `procesando_ia` → `en_verificacion` → `PATCH` `transcrita` → `cobrada` → `pagada`.  
+- Con hallazgos IA: `upload` → `procesando_ia` → `inconsistencia_detectada` → (RRHH corrige/revisa) → `PATCH` `en_verificacion` → `transcrita` → …
 
 ### Flujo RRHH: verificar (aceptar/rechazar datos) vs cambio de estado
 
@@ -213,6 +220,8 @@ Dos endpoints complementarios; no son equivalentes:
 | **Aprobar el trámite** (listo para cobro) | `PATCH …/estado` con `estado: transcrita` | Solo desde **`en_verificacion`**; registra historial. |
 | **Rechazar el trámite** | `PUT …/verificar` con `rechazar` **o** `PATCH …/estado` con `rechazada` | Estado **`rechazada`**; el motivo va en `documentacion_faltante` (`motivo_rechazo` o `observacion` obligatoria en PATCH). |
 | **Pedir documentos al colaborador** | `PUT …/documentacion-faltante` | Lista en `documentacion_faltante` y estado **`doc_incompleta`**. |
+| **Revisar hallazgos de la IA** | Consultar `GET …/{id}` → `inconsistencias[]` | Trámite en **`inconsistencia_detectada`** tras extracción con anomalías. |
+| **Continuar tras corregir hallazgos** | `PATCH …/estado` con `en_verificacion` | Desde **`inconsistencia_detectada`** o **`doc_incompleta`**. |
 | **Colaborador subsanó** | `PATCH …/estado` con `en_verificacion` | Solo desde **`doc_incompleta`**. |
 
 Secuencia típica de **aceptación completa**: extracción IA → `en_verificacion` → `PUT verificar` `confirmar` → `PATCH estado` `transcrita`.
@@ -231,7 +240,7 @@ Secuencia típica de **aceptación completa**: extracción IA → `en_verificaci
 Comportamiento:
 
 - Requiere que exista fila **`extraccion_ia`** para ese trámite; si no, **422**.
-- Solo admite verificación si el estado es **`en_verificacion`**, **`doc_incompleta`** o **`procesando_ia`**; en **`transcrita`**, **`cobrada`**, **`pagada`**, **`rechazada`** o **`recibida`** responde **409**.
+- Solo admite verificación si el estado es **`en_verificacion`**, **`inconsistencia_detectada`**, **`doc_incompleta`** o **`procesando_ia`**; en **`transcrita`**, **`cobrada`**, **`pagada`**, **`rechazada`** o **`recibida`** responde **409**.
 - **`confirmar`:** actualiza metadatos de verificación; estado → **`en_verificacion`**. Si ya estaba en ese estado, **no** duplica fila en `historial_estados`.
 - **`rechazar`:** estado → **`rechazada`**; persiste el motivo; historial solo si hubo cambio de estado.
 - Tras **`rechazada`**, no se puede volver a verificar ni transcribir por PATCH.
@@ -253,6 +262,7 @@ Transiciones permitidas (origen → destinos):
 | Estado actual | Puede pasar a |
 |---------------|----------------|
 | `en_verificacion` | `transcrita`, `doc_incompleta`, `rechazada` |
+| `inconsistencia_detectada` | `en_verificacion`, `doc_incompleta`, `rechazada` |
 | `doc_incompleta` | `en_verificacion` |
 | `transcrita` | `cobrada` |
 | `cobrada` | `pagada` |
@@ -265,7 +275,7 @@ Respuesta **200** (JSON): `id`, `radicado`, `estado`, `estado_anterior`.
 
 - **Roles:** `auxiliar_rrhh`, `coordinador_rrhh`, `admin`.
 - **Cuerpo:** `documentos` (lista de strings, al menos un ítem con texto no vacío); `observacion` opcional para auditoría.
-- Persiste el listado en **`documentacion_faltante`** y deja el trámite en **`doc_incompleta`** cuando el estado actual es **`en_verificacion`** (con registro en **`historial_estados`**).
+- Persiste el listado en **`documentacion_faltante`** y deja el trámite en **`doc_incompleta`** cuando el estado actual es **`en_verificacion`** o **`inconsistencia_detectada`** (con registro en **`historial_estados`**).
 - Si el trámite **ya** está en **`doc_incompleta`**, solo actualiza la lista (sin nuevo historial de cambio de estado).
 - **404** si el `id` no existe; **409** si el estado no admite esta operación; **422** si la lista queda vacía tras normalizar.
 
@@ -274,6 +284,27 @@ Respuesta **200** (JSON): `id`, `radicado`, `estado`, `estado_anterior`, `docume
 ### Extracción IA (configuración)
 
 El prompt versionado vive en **`app/prompts/Nomisalud_prompt_extraccion.md`**. Antes de llamar a Gemini, el job de extracción ejecuta **OCR local** (`ocr_processor`); si hay texto, se inyecta en la sección **«CONTEXTO ADICIONAL — TEXTO OCR»** del prompt (`build_extraction_prompt`). Sin OCR disponible, esa sección se omite.
+
+#### Validación e inconsistencias (SCRUM-169 / SCRUM-170)
+
+Gemini debe devolver, además de `validaciones`, el array obligatorio **`inconsistencias`**: objetos con `tipo` y `descripcion`. Categorías evaluadas en el prompt:
+
+| `tipo` | Qué detecta |
+|--------|-------------|
+| `fechas` | Fechas incoherentes o futuras sin justificación |
+| `dias` | `total_dias` no coincide con el rango declarado |
+| `genero_tipo` | Incompatibilidad maternidad/paternidad vs género |
+| `identificacion` | Documento inválido o formato atípico |
+| `legibilidad` | Documento ilegible o campos críticos dudosos |
+| `dato_faltante` | Campo crítico ausente cuando debería estar visible |
+
+El backend parsea ese array (`parse_inconsistencias_desde_extraccion` en `ai_extractor.py`). Si hay al menos un ítem válido tras la extracción:
+
+1. Inserta filas en **`inconsistencias`** (FK a `incapacidades`).
+2. Deja el trámite en **`inconsistencia_detectada`**.
+3. Guarda igualmente **`extraccion_ia`** con `datos_extraidos` y `validaciones`.
+
+Si el array viene vacío, el flujo sigue en **`en_verificacion`**. El detalle HTTP expone `inconsistencias[]` para el front.
 
 Variables relevantes (ver **`.env.example`**):
 
@@ -345,7 +376,7 @@ curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
   -F "archivo=@./mi_incapacidad.pdf;type=application/pdf"
 ```
 
-Respuesta típica: `{"radicado":"IN…","estado":"procesando_ia"}`. Puedes listar con `GET /api/v1/incapacidades`, ver detalle con `GET /api/v1/incapacidades/{id}` o revisar la base de datos para estados `en_verificacion` / `doc_incompleta` cuando termine el job.
+Respuesta típica: `{"radicado":"IN…","estado":"procesando_ia"}`. Cuando termine el job, revisa el detalle: `en_verificacion`, `inconsistencia_detectada` (con `inconsistencias[]`) o `doc_incompleta` si falló la extracción.
 
 Si RRHH/admin carga para un colaborador específico:
 
@@ -420,11 +451,11 @@ curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/est
   -H "Content-Type: application/json" \
   -d '{"estado":"doc_incompleta","observacion":"Falta documentación"}'
 
-# --- en_verificacion (colaborador subsanó; solo desde doc_incompleta) ---
+# --- en_verificacion (desde doc_incompleta o inconsistencia_detectada) ---
 curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"estado":"en_verificacion","observacion":"Documentos recibidos"}'
+  -d '{"estado":"en_verificacion","observacion":"Hallazgos revisados / documentos recibidos"}'
 
 # --- rechazada (desde en_verificacion; observacion obligatoria) ---
 curl -s -X PATCH "http://localhost:8000/api/v1/incapacidades/$INCAPACIDAD_ID/estado" \
@@ -472,6 +503,7 @@ nomisalud-back-end/
 │   │   ├── user.py
 │   │   ├── incapacidad.py
 │   │   ├── extraccion_ia.py  # Resultado IA (JSONB + raw_response)
+│   │   ├── inconsistencia.py # Hallazgos IA (tipo + descripcion, FK incapacidad)
 │   │   └── historial_estado.py
 │   ├── prompts/
 │   │   └── Nomisalud_prompt_extraccion.md  # Prompt Gemini (versionado en git)
@@ -491,7 +523,7 @@ nomisalud-back-end/
 │   │   └── incapacidad_upload_service.py
 │   └── repositories/
 ├── alembic/                  # Migraciones de base de datos
-│   └── versions/             # users, dominio incapacidades, extraccion_ia, raw_response, …
+│   └── versions/             # users, incapacidades, extraccion_ia, inconsistencias, …
 ├── scripts/
 │   └── seed.py               # Seed de usuarios de prueba
 ├── tests/
@@ -506,7 +538,7 @@ nomisalud-back-end/
 
 ## Migraciones con Alembic
 
-El historial de migraciones cubre el dominio de usuarios, las tablas **incapacidades**, **extraccion_ia** (incluida la columna **`raw_response`**), **historial_estados** y demás cambios de esquema versionados en `alembic/versions`. Tras clonar o actualizar código, ejecuta siempre `upgrade head` antes de probar uploads con IA.
+El historial de migraciones cubre el dominio de usuarios, las tablas **incapacidades**, **extraccion_ia**, **inconsistencias**, **historial_estados** (incl. estado `inconsistencia_detectada` en el enum) y demás cambios en `alembic/versions`. Tras clonar o actualizar código, ejecuta siempre `upgrade head` antes de probar uploads con IA.
 
 ```bash
 # Aplicar todas las migraciones pendientes
@@ -594,6 +626,9 @@ docker compose exec db psql -U nomisalud -d nomisalud_db
 \dt                            -- listar tablas
 \d users                       -- estructura de la tabla users
 \d extraccion_ia               -- extracción IA vinculada a incapacidades (1:1)
+\d inconsistencias             -- hallazgos por incapacidad (1:N)
+SELECT id, estado FROM incapacidades ORDER BY created_at DESC LIMIT 5;
+SELECT tipo, descripcion FROM inconsistencias WHERE incapacidad_id = 'UUID-del-tramite';
 SELECT * FROM users;           -- ver registros
 SELECT * FROM alembic_version; -- ver migraciones aplicadas
 \q                             -- salir
