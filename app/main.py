@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.core.scheduler import detener_scheduler, iniciar_scheduler
 
 settings = get_settings()
 
@@ -14,7 +15,9 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Gestiona el ciclo de vida de la aplicación (startup / shutdown)."""
     Path(settings.UPLOAD_STORAGE_DIR).mkdir(parents=True, exist_ok=True)
+    iniciar_scheduler()
     yield
+    detener_scheduler()
 
 
 def create_application() -> FastAPI:

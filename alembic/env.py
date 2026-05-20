@@ -10,6 +10,7 @@ from app.core.database import Base
 
 # Importar todos los modelos para que Alembic los detecte en autogenerate
 from app.models import (  # noqa: F401
+    AlertaEnviada,
     ExtraccionIA,
     HistorialEstado,
     Incapacidad,

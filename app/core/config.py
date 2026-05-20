@@ -49,6 +49,27 @@ class Settings(BaseSettings):
     OCR_PDF_RENDER_DPI: int = 200
     OCR_MIN_CHARS_PDF_NATIVO: int = 40
 
+    # APScheduler — revisión diaria de vencimientos (SCRUM-180)
+    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_TIMEZONE: str = "America/Bogota"
+    SCHEDULER_CRON_HOUR: int = 7
+    SCHEDULER_CRON_MINUTE: int = 0
+
+    # SMTP / alertas por correo (SCRUM-181)
+    MAIL_ENABLED: bool = False
+    MAIL_SERVER: str = ""
+    MAIL_PORT: int = 587
+    MAIL_USERNAME: str = ""
+    MAIL_PASSWORD: str = ""
+    MAIL_FROM: str = ""
+    MAIL_STARTTLS: bool = True
+    MAIL_SSL_TLS: bool = False
+    MAIL_VALIDATE_CERTS: bool = True
+    MAIL_ALERT_RECIPIENTS: str = ""
+
+    # Deduplicación de alertas (SCRUM-182)
+    ALERTAS_DEDUP_DIAS: int = 7
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -61,6 +82,17 @@ class Settings(BaseSettings):
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
+
+    @property
+    def mail_alert_recipients_list(self) -> list[str]:
+        """Destinatarios RRHH para alertas (lista desde CSV en env)."""
+        if not self.MAIL_ALERT_RECIPIENTS.strip():
+            return []
+        return [
+            correo.strip()
+            for correo in self.MAIL_ALERT_RECIPIENTS.split(",")
+            if correo.strip()
+        ]
 
     @property
     def database_url_sync(self) -> str:

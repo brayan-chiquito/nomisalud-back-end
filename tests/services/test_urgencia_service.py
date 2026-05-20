@@ -9,6 +9,7 @@ from app.models.entidad_plazo import EntidadPlazo
 from app.services.urgencia_service import (
     NivelUrgencia,
     buscar_plazo_entidad,
+    calcular_dias_restantes,
     calcular_urgencia,
     cargar_indice_plazos,
     clasificar_urgencia_desde_plazo,
@@ -16,6 +17,19 @@ from app.services.urgencia_service import (
     resolver_plazo_en_indice,
     urgencia_desde_indice,
 )
+
+
+def test_calcular_dias_restantes() -> None:
+    recepcion = datetime(2025, 1, 1, tzinfo=UTC)
+    evaluacion = datetime(2025, 1, 10, tzinfo=UTC)
+    assert (
+        calcular_dias_restantes(
+            fecha_recepcion=recepcion,
+            dias_limite=15,
+            fecha_evaluacion=evaluacion,
+        )
+        == 6
+    )
 
 
 def test_clasificar_verde_con_margen() -> None:
