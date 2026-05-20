@@ -67,6 +67,7 @@ from app.services.incapacidad_verify_service import (
     IncapacidadVerifyError,
     verify_incapacidad_manual,
 )
+from app.services.urgencia_service import parse_nivel_urgencia
 
 router = APIRouter(prefix="/incapacidades", tags=["Incapacidades"])
 
@@ -159,14 +160,26 @@ def _parse_estado_filtro(raw: str | None) -> IncapacidadEstado | None:
         ) from exc
 
 
+def _parse_urgencia_filtro(raw: str | None) -> str | None:
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return parse_nivel_urgencia(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Parámetro urgencia no es válido. Use: verde, amarillo o rojo.",
+        ) from exc
+
+
 @router.get(
     "",
     response_model=IncapacidadListResponse,
     summary="Listado paginado de incapacidades",
     description=(
-        "Devuelve incapacidades con filtros opcionales (`estado`, `tipo`, `entidad`) "
-        "y paginación (`page`). El rol colaborador solo ve sus trámites; RRHH y admin "
-        "ven el universo completo."
+        "Devuelve incapacidades con filtros opcionales (`estado`, `tipo`, `entidad`, "
+        "`urgencia`) y paginación (`page`). El rol colaborador solo ve sus trámites; "
+        "RRHH y admin ven el universo completo."
     ),
 )
 async def list_incapacidades(
@@ -181,6 +194,10 @@ async def list_incapacidades(
     entidad: str | None = Query(
         None, description="Subcadena del nombre de entidad (datos extraídos)"
     ),
+    urgencia: str | None = Query(
+        None,
+        description="Filtrar por nivel de urgencia calculado: verde, amarillo o rojo",
+    ),
     current_user: TokenPayload = Depends(
         require_roles(
             UserRole.COLABORADOR,
@@ -192,6 +209,7 @@ async def list_incapacidades(
     db: AsyncSession = Depends(get_db),
 ) -> IncapacidadListResponse:
     estado_enum = _parse_estado_filtro(estado)
+    urgencia_filtro = _parse_urgencia_filtro(urgencia)
     colaborador_id_scope: UUID | None = None
     if UserRole(current_user.role) == UserRole.COLABORADOR:
         colaborador_id_scope = UUID(current_user.user_id)
@@ -206,6 +224,7 @@ async def list_incapacidades(
         tipo=tipo,
         entidad=entidad,
         colaborador_id_scope=colaborador_id_scope,
+        urgencia_filtro=urgencia_filtro,
     )
     items = [
         IncapacidadListItem(
@@ -224,6 +243,7 @@ async def list_incapacidades(
             entidad_nit=r.entidad_nit,
             entidad_ciudad=r.entidad_ciudad,
             incapacidad_tipo_extraido=r.incapacidad_tipo_extraido,
+            urgencia=r.urgencia,
         )
         for r in rows
     ]

@@ -60,6 +60,13 @@ class IncapacidadListItem(BaseModel):
             "(clasificación en documento; distinto de archivo_tipo)"
         ),
     )
+    urgencia: str = Field(
+        ...,
+        description=(
+            "Semáforo calculado según plazos de entidad: "
+            "`verde`, `amarillo` o `rojo` (SCRUM-176/177)"
+        ),
+    )
 
 
 class IncapacidadListResponse(BaseModel):
