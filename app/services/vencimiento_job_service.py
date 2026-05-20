@@ -7,11 +7,11 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.models.alerta_enviada import TipoAlerta
 from app.models.extraccion_ia import ExtraccionIA
 from app.models.incapacidad import Incapacidad, IncapacidadEstado
@@ -70,52 +70,78 @@ class _CandidatoAlerta:
     tipo_alerta: TipoAlerta
 
 
-async def revisar_vencimientos_y_alertar(
-    db: AsyncSession,
-    *,
-    fecha_evaluacion: datetime | None = None,
-) -> VencimientoJobResultado:
-    """
-    Busca trámites en ventana amarilla/roja, evita duplicados (7 días)
-    y envía correos de alerta.
-    """
-    settings = get_settings()
-    ref = fecha_evaluacion or datetime.now(UTC)
-    resultado = VencimientoJobResultado()
-
-    if not mail_configurado(settings):
-        logger.warning(
-            "Job de vencimientos: correo deshabilitado o sin SMTP/destinatarios; "
-            "no se enviarán alertas."
-        )
-        return resultado
-
-    indice_plazos = await cargar_indice_plazos(db)
-    Colaborador = aliased(User)
+def _stmt_incapacidades_revisables() -> Select:
+    colab_user = aliased(User)
     nombre_path = func.jsonb_extract_path_text(
         ExtraccionIA.datos_extraidos, "entidad", "nombre"
     )
     tipo_path = func.jsonb_extract_path_text(
         ExtraccionIA.datos_extraidos, "incapacidad", "tipo"
     )
-
-    stmt = (
+    return (
         select(
             Incapacidad,
-            Colaborador.nombre_completo,
+            colab_user.nombre_completo,
             nombre_path,
             tipo_path,
         )
         .select_from(Incapacidad)
-        .join(Colaborador, Colaborador.id == Incapacidad.colaborador_id)
+        .join(colab_user, colab_user.id == Incapacidad.colaborador_id)
         .outerjoin(ExtraccionIA, ExtraccionIA.incapacidad_id == Incapacidad.id)
         .where(Incapacidad.estado.in_(ESTADOS_REVISABLES))
     )
-    rows = (await db.execute(stmt)).all()
 
+
+async def _fetch_filas_revisables(db: AsyncSession) -> list:
+    stmt = _stmt_incapacidades_revisables()
+    return (await db.execute(stmt)).all()
+
+
+def _construir_candidato(
+    inc: Incapacidad,
+    colaborador_nombre: str | None,
+    entidad_nombre: str | None,
+    tipo_incapacidad: str | None,
+    *,
+    urgencia: str,
+    tipo_alerta: TipoAlerta,
+    indice_plazos: dict,
+    ref: datetime,
+) -> _CandidatoAlerta:
+    plazo = resolver_plazo_en_indice(
+        indice_plazos,
+        entidad_nombre=entidad_nombre,
+        tipo_incapacidad=tipo_incapacidad,
+    )
+    dias_restantes = 0
+    if plazo is not None:
+        dias_restantes = calcular_dias_restantes(
+            fecha_recepcion=inc.fecha_recepcion,
+            dias_limite=plazo.dias_limite,
+            fecha_evaluacion=ref,
+        )
+    return _CandidatoAlerta(
+        incapacidad_id=inc.id,
+        radicado=inc.radicado,
+        colaborador_nombre=colaborador_nombre or "Sin nombre",
+        entidad_nombre=entidad_nombre or "Sin entidad",
+        tipo_incapacidad=tipo_incapacidad or "general",
+        dias_restantes=dias_restantes,
+        nivel_urgencia=urgencia,
+        tipo_alerta=tipo_alerta,
+    )
+
+
+def _extraer_candidatos(
+    rows: list,
+    indice_plazos: dict,
+    ref: datetime,
+) -> tuple[list[_CandidatoAlerta], int, int]:
     candidatos: list[_CandidatoAlerta] = []
-    for inc, colaborador_nombre, entidad_nombre, tipo_incapacidad in rows:
-        resultado.evaluados += 1
+    evaluados = 0
+    omitidos_verde = 0
+    for inc, nom, entidad_nombre, tipo_incapacidad in rows:
+        evaluados += 1
         urgencia = urgencia_desde_indice(
             indice_plazos,
             fecha_recepcion=inc.fecha_recepcion,
@@ -124,56 +150,51 @@ async def revisar_vencimientos_y_alertar(
             fecha_evaluacion=ref,
         )
         if urgencia == NivelUrgencia.VERDE.value:
-            resultado.omitidos_verde += 1
+            omitidos_verde += 1
             continue
-
         tipo_alerta = _URGENCIA_A_TIPO_ALERTA.get(urgencia)
         if tipo_alerta is None:
             continue
-
-        plazo = resolver_plazo_en_indice(
-            indice_plazos,
-            entidad_nombre=entidad_nombre,
-            tipo_incapacidad=tipo_incapacidad,
-        )
-        dias_restantes = 0
-        if plazo is not None:
-            dias_restantes = calcular_dias_restantes(
-                fecha_recepcion=inc.fecha_recepcion,
-                dias_limite=plazo.dias_limite,
-                fecha_evaluacion=ref,
-            )
-
         candidatos.append(
-            _CandidatoAlerta(
-                incapacidad_id=inc.id,
-                radicado=inc.radicado,
-                colaborador_nombre=colaborador_nombre or "Sin nombre",
-                entidad_nombre=entidad_nombre or "Sin entidad",
-                tipo_incapacidad=tipo_incapacidad or "general",
-                dias_restantes=dias_restantes,
-                nivel_urgencia=urgencia,
+            _construir_candidato(
+                inc,
+                nom,
+                entidad_nombre,
+                tipo_incapacidad,
+                urgencia=urgencia,
                 tipo_alerta=tipo_alerta,
+                indice_plazos=indice_plazos,
+                ref=ref,
             )
         )
+    return candidatos, evaluados, omitidos_verde
 
-    ventana = settings.ALERTAS_DEDUP_DIAS
+
+async def _procesar_envios(
+    db: AsyncSession,
+    candidatos: list[_CandidatoAlerta],
+    settings: Settings,
+    ref: datetime,
+    ventana_dias: int,
+) -> tuple[int, int, list[str]]:
+    enviadas = 0
+    duplicados = 0
+    errores: list[str] = []
     for cand in candidatos:
         if await existe_alerta_reciente(
             db,
             incapacidad_id=cand.incapacidad_id,
             tipo_alerta=cand.tipo_alerta,
-            ventana_dias=ventana,
+            ventana_dias=ventana_dias,
             fecha_referencia=ref,
         ):
-            resultado.omitidos_duplicado += 1
+            duplicados += 1
             logger.debug(
                 "Alerta omitida (duplicado) radicado=%s tipo=%s",
                 cand.radicado,
                 cand.tipo_alerta.value,
             )
             continue
-
         try:
             await enviar_alerta_vencimiento(
                 AlertaVencimientoCorreo(
@@ -192,11 +213,50 @@ async def revisar_vencimientos_y_alertar(
                 tipo_alerta=cand.tipo_alerta,
                 enviada_en=ref,
             )
-            resultado.alertas_enviadas += 1
+            enviadas += 1
         except Exception as exc:
             msg = f"radicado={cand.radicado}: {exc}"
             logger.exception("Error enviando alerta de vencimiento: %s", msg)
-            resultado.errores.append(msg)
+            errores.append(msg)
+    return enviadas, duplicados, errores
 
+
+async def revisar_vencimientos_y_alertar(
+    db: AsyncSession,
+    *,
+    fecha_evaluacion: datetime | None = None,
+) -> VencimientoJobResultado:
+    """
+    Busca trámites en ventana amarilla/roja, evita duplicados (7 días)
+    y envía correos de alerta.
+    """
+    settings = get_settings()
+    ref = fecha_evaluacion or datetime.now(UTC)
+
+    if not mail_configurado(settings):
+        logger.warning(
+            "Job de vencimientos: correo deshabilitado o sin SMTP/destinatarios; "
+            "no se enviarán alertas."
+        )
+        return VencimientoJobResultado()
+
+    indice_plazos = await cargar_indice_plazos(db)
+    rows = await _fetch_filas_revisables(db)
+    candidatos, evaluados, omitidos_verde = _extraer_candidatos(
+        rows, indice_plazos, ref
+    )
+    enviadas, duplicados, errores = await _procesar_envios(
+        db,
+        candidatos,
+        settings,
+        ref,
+        settings.ALERTAS_DEDUP_DIAS,
+    )
     await db.commit()
-    return resultado
+    return VencimientoJobResultado(
+        evaluados=evaluados,
+        alertas_enviadas=enviadas,
+        omitidos_duplicado=duplicados,
+        omitidos_verde=omitidos_verde,
+        errores=errores,
+    )
