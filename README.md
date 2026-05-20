@@ -408,6 +408,35 @@ Servicio **`app/services/urgencia_service.py`**:
 
 El **`GET /api/v1/incapacidades`** calcula `urgencia` por ítem y acepta `?urgencia=rojo` (ver sección [Respuesta GET incapacidades](#respuesta-get-apiv1incapacidades)).
 
+### Alertas automáticas por vencimiento (SCRUM-180 / SCRUM-181 / SCRUM-182)
+
+Job diario con **APScheduler** que revisa trámites en estados activos (`en_verificacion`, `inconsistencia_detectada`, `doc_incompleta`), calcula urgencia **amarillo/rojo** y envía correo SMTP a RRHH.
+
+| Componente | Ubicación |
+|------------|-----------|
+| Planificador (07:00, zona `America/Bogota`) | `app/core/scheduler.py` |
+| Lógica del job | `app/services/vencimiento_job_service.py` |
+| Correo + plantilla HTML | `app/services/mail_service.py`, `app/templates/email/alerta_vencimiento.html` |
+| Anti-duplicados (7 días) | Tabla `alertas_enviadas`, `app/services/alerta_enviada_service.py` |
+
+**Variables de entorno** (ver `.env.example`):
+
+| Variable | Descripción |
+|----------|-------------|
+| `SCHEDULER_ENABLED` | `true` para activar el job al arrancar la API |
+| `SCHEDULER_TIMEZONE` | Zona horaria del cron (p. ej. `America/Bogota`) |
+| `SCHEDULER_CRON_HOUR` / `MINUTE` | Hora del disparo (por defecto `7` y `0`) |
+| `MAIL_ENABLED` | `true` cuando SMTP y destinatarios estén listos |
+| `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | Credenciales SMTP |
+| `MAIL_ALERT_RECIPIENTS` | Correos RRHH separados por coma |
+| `ALERTAS_DEDUP_DIAS` | Ventana sin reenvío (por defecto `7`) |
+
+**Migración:** `alembic upgrade head` crea la tabla **`alertas_enviadas`** (`incapacidad_id`, `tipo_alerta`, `enviada_en`). Tipos: `vencimiento_amarillo`, `vencimiento_rojo`.
+
+**Flujo:** job → candidatos amarillo/rojo → si no hay alerta igual en 7 días → envía correo → inserta en `alertas_enviadas`. Si `MAIL_ENABLED=false` o faltan destinatarios, el job registra advertencia y no envía.
+
+**Plantilla del correo:** radicado, colaborador, entidad, tipo de incapacidad, días restantes y nivel de urgencia.
+
 ### OCR con Tesseract (SCRUM-165)
 
 Dependencias Python: **`Pillow`** y **`pytesseract`** (`requirements.txt`). En Docker, el `Dockerfile` instala los paquetes de sistema **`tesseract-ocr`**, **`tesseract-ocr-eng`** y **`tesseract-ocr-spa`**.
@@ -595,6 +624,7 @@ nomisalud-back-end/
 │   │   ├── config.py         # Configuración (pydantic-settings)
 │   │   ├── database.py       # Engine async y sesión de BD
 │   │   ├── dependencies.py   # JWT y dependencias de rutas
+│   │   ├── scheduler.py      # APScheduler job 07:00 (SCRUM-180)
 │   │   └── security.py       # JWT, hash de contraseñas (bcrypt)
 │   ├── api/
 │   │   └── v1/
@@ -611,6 +641,7 @@ nomisalud-back-end/
 │   │   ├── extraccion_ia.py  # Resultado IA (JSONB + raw_response)
 │   │   ├── inconsistencia.py # Hallazgos IA (tipo + descripcion, FK incapacidad)
 │   │   ├── entidad_plazo.py  # Plazos límite por entidad/tipo (SCRUM-173)
+│   │   ├── alerta_enviada.py # Historial alertas enviadas (SCRUM-182)
 │   │   └── historial_estado.py
 │   ├── prompts/
 │   │   └── Nomisalud_prompt_extraccion.md  # Prompt Gemini (versionado en git)
@@ -628,12 +659,15 @@ nomisalud-back-end/
 │   │   ├── incapacidad_verify_service.py   # Verificación manual RRHH (PUT verificar)
 │   │   ├── entidad_plazo_service.py        # CRUD plazos por entidad
 │   │   ├── urgencia_service.py             # Cálculo semáforo verde/amarillo/rojo (SCRUM-176)
+│   │   ├── vencimiento_job_service.py      # Job revisión vencimientos (SCRUM-180)
+│   │   ├── mail_service.py                 # SMTP fastapi-mail (SCRUM-181)
+│   │   ├── alerta_enviada_service.py       # Deduplicación alertas (SCRUM-182)
 │   │   ├── plazo_unidades.py               # Normalización días/meses/años
 │   │   ├── incapacidad_storage.py
 │   │   └── incapacidad_upload_service.py
 │   └── repositories/
 ├── alembic/                  # Migraciones de base de datos
-│   └── versions/             # users, incapacidades, extraccion_ia, inconsistencias, plazos, …
+│   └── versions/             # users, incapacidades, extraccion_ia, inconsistencias, plazos, alertas, …
 ├── scripts/
 │   ├── seed.py                 # Orquestador: usuarios → plazos (run_all_seeds)
 │   └── seed_plazos_entidad.py    # Plazos reglamentarios (también invocado desde seed.py)
@@ -649,7 +683,7 @@ nomisalud-back-end/
 
 ## Migraciones con Alembic
 
-El historial de migraciones cubre el dominio de usuarios, las tablas **incapacidades**, **extraccion_ia**, **inconsistencias**, **entidades_plazos**, **historial_estados** (incl. estado `inconsistencia_detectada` en el enum) y demás cambios en `alembic/versions`. Tras clonar o actualizar código, ejecuta siempre `upgrade head` y el seed antes de probar uploads con IA o el panel de plazos.
+El historial de migraciones cubre el dominio de usuarios, las tablas **incapacidades**, **extraccion_ia**, **inconsistencias**, **entidades_plazos**, **alertas_enviadas**, **historial_estados** (incl. estado `inconsistencia_detectada` en el enum) y demás cambios en `alembic/versions`. Tras clonar o actualizar código, ejecuta siempre `upgrade head` y el seed antes de probar uploads con IA o el panel de plazos.
 
 ```bash
 # Aplicar todas las migraciones pendientes

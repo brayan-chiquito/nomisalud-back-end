@@ -27,6 +27,18 @@ def _fecha_a_dia_utc(valor: datetime) -> date:
     return valor.astimezone(UTC).date()
 
 
+def calcular_dias_restantes(
+    *,
+    fecha_recepcion: datetime,
+    dias_limite: int,
+    fecha_evaluacion: datetime | None = None,
+) -> int:
+    """Días calendario hasta la fecha límite (negativo si ya venció)."""
+    ref = fecha_evaluacion or datetime.now(UTC)
+    fecha_limite = _fecha_a_dia_utc(fecha_recepcion) + timedelta(days=dias_limite)
+    return (fecha_limite - _fecha_a_dia_utc(ref)).days
+
+
 def clasificar_urgencia_desde_plazo(
     *,
     fecha_recepcion: datetime,
@@ -42,9 +54,11 @@ def clasificar_urgencia_desde_plazo(
       (``0 < dias_restantes <= dias_alerta``).
     - ``verde``: margen cómodo antes del límite.
     """
-    ref = fecha_evaluacion or datetime.now(UTC)
-    fecha_limite = _fecha_a_dia_utc(fecha_recepcion) + timedelta(days=dias_limite)
-    dias_restantes = (fecha_limite - _fecha_a_dia_utc(ref)).days
+    dias_restantes = calcular_dias_restantes(
+        fecha_recepcion=fecha_recepcion,
+        dias_limite=dias_limite,
+        fecha_evaluacion=fecha_evaluacion,
+    )
     if dias_restantes <= 0:
         return NivelUrgencia.ROJO.value
     if dias_restantes <= dias_alerta:

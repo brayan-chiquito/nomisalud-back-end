@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
 if TYPE_CHECKING:
+    from app.models.alerta_enviada import AlertaEnviada
     from app.models.extraccion_ia import ExtraccionIA
     from app.models.historial_estado import HistorialEstado
     from app.models.inconsistencia import Inconsistencia
@@ -122,6 +123,11 @@ class Incapacidad(Base):
     )
     inconsistencias: Mapped[list[Inconsistencia]] = relationship(
         "Inconsistencia",
+        back_populates="incapacidad",
+        cascade="all, delete-orphan",
+    )
+    alertas_enviadas: Mapped[list[AlertaEnviada]] = relationship(
+        "AlertaEnviada",
         back_populates="incapacidad",
         cascade="all, delete-orphan",
     )
