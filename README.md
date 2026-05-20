@@ -39,7 +39,7 @@ docker compose exec api python -m scripts.seed
 | GET    | `/api/v1/health/`              | No   | Estado básico de la API |
 | GET    | `/api/v1/health/db`            | No   | Verifica conexión a PostgreSQL |
 | POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
-| GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye nombre y email del colaborador y campos de entidad desde extracción IA |
+| GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye `urgencia` calculada, nombre/email del colaborador y entidad desde extracción IA |
 | GET    | `/api/v1/incapacidades/mias`   | Sí   | Mis trámites (solo `colaborador`): filtro estricto por JWT; cada ítem incluye `estado` y `updated_at` |
 | GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: `extraccion_ia`, lista `inconsistencias` (hallazgos IA) y `archivo_url` |
 | GET    | `/api/v1/incapacidades/{id}/archivo` | Sí | Descarga del documento adjunto (mismo JWT que el detalle; ruta validada bajo `UPLOAD_STORAGE_DIR`) |
@@ -112,6 +112,19 @@ Comportamiento según el texto enviado (se recorta espacio en blanco y se compar
 - Solo afecta a trámites con fila en **`extraccion_ia`** (misma condición de `JOIN` que cuando usas el modo (2) de `tipo`).
 - Puedes combinarlo con `tipo`: si usas `tipo=pdf` y `entidad=…`, ambos filtros se aplican a la vez (`AND`).
 
+#### `urgencia` (SCRUM-176 / SCRUM-177)
+
+- Filtra por el **semáforo calculado** en cada ítem del listado.
+- Valores permitidos: **`verde`**, **`amarillo`**, **`rojo`** (insensible a mayúsculas).
+- Cualquier otro valor produce **422**.
+- El cálculo usa `fecha_recepcion`, el nombre de entidad extraído (`datos_extraidos.entidad.nombre`), el tipo de incapacidad extraído y las reglas en **`entidades_plazos`** (`dias_limite`, `dias_alerta`).
+- **Fecha límite** = fecha de recepción + `dias_limite` (días calendario).
+- **Clasificación** (días restantes hasta la fecha límite, respecto a hoy en UTC):
+  - **`rojo`**: vencido o sin días restantes (`≤ 0`).
+  - **`amarillo`**: dentro de la ventana de alerta (`0 < restantes ≤ dias_alerta`).
+  - **`verde`**: margen cómodo antes del límite, o si no hay plazo configurado para esa entidad/tipo.
+- Con `urgencia` activo, el backend calcula la urgencia de **todos** los candidatos que cumplen los demás filtros y pagina en memoria (el `total` refleja solo los que coinciden con el semáforo).
+
 Cuerpo JSON (200 OK):
 
 ```json
@@ -130,7 +143,8 @@ Cuerpo JSON (200 OK):
       "entidad_tipo": "EPS",
       "entidad_nit": "800123456-7",
       "entidad_ciudad": "Bogotá",
-      "incapacidad_tipo_extraido": "enfermedad_general"
+      "incapacidad_tipo_extraido": "enfermedad_general",
+      "urgencia": "amarillo"
     }
   ],
   "total": 45,
@@ -138,6 +152,7 @@ Cuerpo JSON (200 OK):
 }
 ```
 
+- **`urgencia`**: `verde` | `amarillo` | `rojo`, calculado según plazos de la entidad (ver parámetro `urgencia` arriba).
 - **`colaborador_nombre`**: `users.nombre_completo` del titular; puede ser `null` si el perfil no tiene nombre cargado (el front puede mostrar `colaborador_email` como respaldo).
 - **`colaborador_email`**: `users.email` del titular.
 - **`entidad_*`**, **`incapacidad_tipo_extraido`**: leídos de `extraccion_ia.datos_extraidos` cuando existe extracción; si aún no hay fila IA o el documento no trae el dato, suelen ser `null` (columna entidad en UI: usar `entidad_nombre` y campos relacionados).
@@ -381,6 +396,18 @@ Ejemplo de creación:
 
 Errores habituales: **403** (no admin), **404** (id inexistente), **409** (duplicado entidad+tipo), **422** (`dias_alerta` mayor que `dias_limite` o `valor_limite` inválido).
 
+### Urgencia en listado (SCRUM-176 / SCRUM-177)
+
+Servicio **`app/services/urgencia_service.py`**:
+
+| Función | Descripción |
+|---------|-------------|
+| `calcular_urgencia` | Consulta `entidades_plazos` y devuelve `verde` \| `amarillo` \| `rojo` |
+| `clasificar_urgencia_desde_plazo` | Lógica pura (fecha recepción + `dias_limite` + `dias_alerta`) |
+| `cargar_indice_plazos` | Índice en memoria para el listado (evita N+1) |
+
+El **`GET /api/v1/incapacidades`** calcula `urgencia` por ítem y acepta `?urgencia=rojo` (ver sección [Respuesta GET incapacidades](#respuesta-get-apiv1incapacidades)).
+
 ### OCR con Tesseract (SCRUM-165)
 
 Dependencias Python: **`Pillow`** y **`pytesseract`** (`requirements.txt`). En Docker, el `Dockerfile` instala los paquetes de sistema **`tesseract-ocr`**, **`tesseract-ocr-eng`** y **`tesseract-ocr-spa`**.
@@ -453,7 +480,7 @@ curl -s -X POST http://localhost:8000/api/v1/incapacidades/upload \
 #### Listado de incapacidades (paginado)
 
 ```bash
-curl -s "http://localhost:8000/api/v1/incapacidades?page=1&estado=transcrita" \
+curl -s "http://localhost:8000/api/v1/incapacidades?page=1&estado=transcrita&urgencia=amarillo" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -600,6 +627,7 @@ nomisalud-back-end/
 │   │   ├── incapacidad_documentacion_service.py  # PUT documentación faltante
 │   │   ├── incapacidad_verify_service.py   # Verificación manual RRHH (PUT verificar)
 │   │   ├── entidad_plazo_service.py        # CRUD plazos por entidad
+│   │   ├── urgencia_service.py             # Cálculo semáforo verde/amarillo/rojo (SCRUM-176)
 │   │   ├── plazo_unidades.py               # Normalización días/meses/años
 │   │   ├── incapacidad_storage.py
 │   │   └── incapacidad_upload_service.py

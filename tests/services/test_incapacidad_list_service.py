@@ -1,7 +1,8 @@
 """Tests del servicio de listado paginado de incapacidades (SCRUM-130)."""
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -56,21 +57,28 @@ def _tuple_row(
 @pytest.mark.asyncio
 async def test_list_sin_filtros_ni_join() -> None:
     row_inc = MagicMock()
+    row_inc.fecha_recepcion = datetime(2025, 1, 1, tzinfo=UTC)
     db = _mock_db_results(total=3, list_rows=[_tuple_row(row_inc)])
-    rows, total = await list_incapacidades_paginated(
-        db,
-        page=1,
-        page_size=10,
-        estado=None,
-        tipo=None,
-        entidad=None,
-        colaborador_id_scope=None,
-    )
+    with patch(
+        "app.services.incapacidad_list_service.cargar_indice_plazos",
+        new_callable=AsyncMock,
+        return_value={},
+    ):
+        rows, total = await list_incapacidades_paginated(
+            db,
+            page=1,
+            page_size=10,
+            estado=None,
+            tipo=None,
+            entidad=None,
+            colaborador_id_scope=None,
+        )
     assert total == 3
     assert len(rows) == 1
     assert isinstance(rows[0], IncapacidadListRow)
     assert rows[0].incapacidad is row_inc
     assert rows[0].colaborador_nombre == "Nombre Colab"
+    assert rows[0].urgencia == "verde"
     assert db.execute.await_count == 2
 
 
@@ -78,31 +86,82 @@ async def test_list_sin_filtros_ni_join() -> None:
 async def test_list_con_estado_scope_y_tipo_archivo() -> None:
     db = _mock_db_results(total=1, list_rows=[])
     cid = uuid.uuid4()
-    await list_incapacidades_paginated(
-        db,
-        page=1,
-        page_size=5,
-        estado=IncapacidadEstado.EN_VERIFICACION,
-        tipo="  PNG ",
-        entidad=None,
-        colaborador_id_scope=cid,
-    )
+    with patch(
+        "app.services.incapacidad_list_service.cargar_indice_plazos",
+        new_callable=AsyncMock,
+        return_value={},
+    ):
+        await list_incapacidades_paginated(
+            db,
+            page=1,
+            page_size=5,
+            estado=IncapacidadEstado.EN_VERIFICACION,
+            tipo="  PNG ",
+            entidad=None,
+            colaborador_id_scope=cid,
+        )
     assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_list_tipo_negocio_y_entidad_usa_join() -> None:
     db = _mock_db_results(total=0, list_rows=[])
-    await list_incapacidades_paginated(
-        db,
-        page=2,
-        page_size=2,
-        estado=None,
-        tipo="laboral",
-        entidad="Sanitas",
-        colaborador_id_scope=None,
-    )
+    with patch(
+        "app.services.incapacidad_list_service.cargar_indice_plazos",
+        new_callable=AsyncMock,
+        return_value={},
+    ):
+        await list_incapacidades_paginated(
+            db,
+            page=2,
+            page_size=2,
+            estado=None,
+            tipo="laboral",
+            entidad="Sanitas",
+            colaborador_id_scope=None,
+        )
     assert db.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_list_filtro_urgencia_pagina_en_memoria() -> None:
+    inc_verde = MagicMock()
+    inc_verde.fecha_recepcion = datetime(2025, 1, 1, tzinfo=UTC)
+    inc_rojo = MagicMock()
+    inc_rojo.fecha_recepcion = datetime(2025, 1, 1, tzinfo=UTC)
+    db = AsyncMock()
+    mock_list = MagicMock()
+    mock_list.all.return_value = [
+        _tuple_row(inc_verde),
+        _tuple_row(inc_rojo),
+    ]
+    db.execute = AsyncMock(return_value=mock_list)
+
+    with (
+        patch(
+            "app.services.incapacidad_list_service.cargar_indice_plazos",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.services.incapacidad_list_service.urgencia_desde_indice",
+            side_effect=["verde", "rojo"],
+        ),
+    ):
+        rows, total = await list_incapacidades_paginated(
+            db,
+            page=1,
+            page_size=10,
+            estado=None,
+            tipo=None,
+            entidad=None,
+            colaborador_id_scope=None,
+            urgencia_filtro="rojo",
+        )
+    assert total == 1
+    assert len(rows) == 1
+    assert rows[0].urgencia == "rojo"
+    assert rows[0].incapacidad is inc_rojo
 
 
 def _mock_db_mis_results(*, total: int, incapacidades: list) -> AsyncMock:
