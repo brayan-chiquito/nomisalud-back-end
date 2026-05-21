@@ -105,7 +105,7 @@ async def _fetch_cobradas_sin_pago(db: AsyncSession) -> list:
 async def _desmarcar_obsoletos(db: AsyncSession) -> int:
     """Quita la marca si el trámite ya no está cobrada pendiente o tiene pago."""
     tiene_pago = (
-        select(PagoIncapacidad.id)
+        select(PagoIncapacidad.incapacidad_id)
         .where(PagoIncapacidad.incapacidad_id == Incapacidad.id)
         .correlate(Incapacidad)
     )
