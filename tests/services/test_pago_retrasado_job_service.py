@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.models.entidad_plazo import EntidadPlazo, UnidadPlazo
 from app.models.incapacidad import IncapacidadEstado
 from app.services.pago_retrasado_job_service import (
+    _fetch_cobradas_sin_pago,
     detectar_y_marcar_pagos_retrasados,
     dias_desde_fecha_cobrada,
     evaluar_pago_retrasado,
@@ -166,3 +167,104 @@ async def test_desmarcar_obsoletos_retorna_rowcount() -> None:
     db.execute = AsyncMock(return_value=mock_result)
     n = await _desmarcar_obsoletos(db)
     assert n == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_cobradas_sin_pago_ejecuta_consulta() -> None:
+    db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all.return_value = []
+    db.execute = AsyncMock(return_value=mock_result)
+    filas = await _fetch_cobradas_sin_pago(db)
+    assert filas == []
+    db.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_detectar_flujo_sin_mocks_internos() -> None:
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    inc = MagicMock()
+    inc.radicado = "IN02"
+    inc.pago_retrasado = False
+    fecha_cobrada = datetime(2024, 1, 1, tzinfo=UTC)
+    plazo = EntidadPlazo(
+        entidad_nombre="EPS",
+        tipo_incapacidad="general",
+        valor_limite=30,
+        unidad_limite=UnidadPlazo.DIAS,
+        dias_limite=30,
+        dias_alerta=5,
+        dias_promedio_pago=5,
+    )
+
+    desmarcar_result = MagicMock()
+    desmarcar_result.rowcount = 0
+    fetch_result = MagicMock()
+    fetch_result.all.return_value = [(inc, "EPS", "general", fecha_cobrada)]
+    db.execute = AsyncMock(side_effect=[desmarcar_result, fetch_result])
+
+    with (
+        patch(
+            "app.services.pago_retrasado_job_service.cargar_indice_plazos",
+            new_callable=AsyncMock,
+            return_value={("eps", "general"): plazo},
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service.get_settings",
+            return_value=Settings(PAGO_RETRASO_DIAS_DEFAULT=30),
+        ),
+    ):
+        resultado = await detectar_y_marcar_pagos_retrasados(
+            db,
+            fecha_evaluacion=datetime(2024, 2, 1, tzinfo=UTC),
+        )
+
+    assert resultado.evaluados == 1
+    assert resultado.marcados_retrasado == 1
+    assert inc.pago_retrasado is True
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_detectar_ya_marcado_no_incrementa_contador() -> None:
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    inc = MagicMock()
+    inc.radicado = "IN03"
+    inc.pago_retrasado = True
+    fecha_cobrada = datetime(2024, 1, 1, tzinfo=UTC)
+    plazo = EntidadPlazo(
+        entidad_nombre="EPS",
+        tipo_incapacidad="general",
+        valor_limite=30,
+        unidad_limite=UnidadPlazo.DIAS,
+        dias_limite=30,
+        dias_alerta=5,
+        dias_promedio_pago=5,
+    )
+
+    desmarcar_result = MagicMock()
+    desmarcar_result.rowcount = 0
+    fetch_result = MagicMock()
+    fetch_result.all.return_value = [(inc, "EPS", "general", fecha_cobrada)]
+    db.execute = AsyncMock(side_effect=[desmarcar_result, fetch_result])
+
+    with (
+        patch(
+            "app.services.pago_retrasado_job_service.cargar_indice_plazos",
+            new_callable=AsyncMock,
+            return_value={("eps", "general"): plazo},
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service.get_settings",
+            return_value=Settings(PAGO_RETRASO_DIAS_DEFAULT=30),
+        ),
+    ):
+        resultado = await detectar_y_marcar_pagos_retrasados(
+            db,
+            fecha_evaluacion=datetime(2024, 2, 1, tzinfo=UTC),
+        )
+
+    assert resultado.marcados_retrasado == 0
+    assert inc.pago_retrasado is True

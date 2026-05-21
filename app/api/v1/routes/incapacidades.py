@@ -197,6 +197,8 @@ def _parse_urgencia_filtro(raw: str | None) -> str | None:
     ),
 )
 async def list_incapacidades(
+    current_user: ListIncapacidadesUser,
+    db: DbSession,
     page: int = Query(1, ge=1, description="Número de página (base 1)"),
     estado: str | None = Query(None, description="Filtrar por estado del trámite"),
     tipo: str | None = Query(
@@ -216,8 +218,6 @@ async def list_incapacidades(
         None,
         description="Si es true, solo trámites marcados con pago retrasado (SCRUM-193)",
     ),
-    current_user: ListIncapacidadesUser,
-    db: DbSession,
 ) -> IncapacidadListResponse:
     estado_enum = _parse_estado_filtro(estado)
     urgencia_filtro = _parse_urgencia_filtro(urgencia)

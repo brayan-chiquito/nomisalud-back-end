@@ -191,6 +191,50 @@ async def test_list_filtro_urgencia_pagina_en_memoria() -> None:
     assert rows[0].incapacidad is inc_rojo
 
 
+@pytest.mark.asyncio
+async def test_list_urgencia_y_pago_retrasado_filtra_en_memoria() -> None:
+    inc_ok = MagicMock()
+    inc_ok.fecha_recepcion = datetime(2025, 1, 1, tzinfo=UTC)
+    inc_ok.pago_retrasado = True
+    inc_sin_marca = MagicMock()
+    inc_sin_marca.fecha_recepcion = datetime(2025, 1, 1, tzinfo=UTC)
+    inc_sin_marca.pago_retrasado = False
+    db = AsyncMock()
+    mock_list = MagicMock()
+    mock_list.all.return_value = [
+        _tuple_row(inc_ok),
+        _tuple_row(inc_sin_marca),
+    ]
+    db.execute = AsyncMock(return_value=mock_list)
+
+    with (
+        patch(
+            "app.services.incapacidad_list_service.cargar_indice_plazos",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.services.incapacidad_list_service.urgencia_desde_indice",
+            return_value="verde",
+        ),
+    ):
+        rows, total = await list_incapacidades_paginated(
+            db,
+            page=1,
+            page_size=10,
+            estado=None,
+            tipo=None,
+            entidad=None,
+            colaborador_id_scope=None,
+            urgencia_filtro="verde",
+            pago_retrasado=True,
+        )
+    assert total == 1
+    assert len(rows) == 1
+    assert rows[0].pago_retrasado is True
+    assert rows[0].incapacidad is inc_ok
+
+
 def _mock_db_mis_results(*, total: int, incapacidades: list) -> AsyncMock:
     db = AsyncMock()
     mock_count = MagicMock()
