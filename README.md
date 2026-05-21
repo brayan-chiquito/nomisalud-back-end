@@ -39,6 +39,7 @@ docker compose exec api python -m scripts.seed
 | GET    | `/api/v1/health/`              | No   | Estado básico de la API |
 | GET    | `/api/v1/health/db`            | No   | Verifica conexión a PostgreSQL |
 | POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
+| GET    | `/api/v1/colaboradores/buscar` | Sí   | Autocompletado de colaboradores por nombre o cédula (`recepcion`, RRHH, `admin`) — SCRUM-197 |
 | GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye `urgencia`, `pago_retrasado` (badge SCRUM-194) y datos de extracción IA |
 | GET    | `/api/v1/incapacidades/mias`   | Sí   | Mis trámites (solo `colaborador`): filtro estricto por JWT; cada ítem incluye `estado` y `updated_at` |
 | GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: `extraccion_ia`, lista `inconsistencias` (hallazgos IA) y `archivo_url` |
@@ -80,7 +81,28 @@ Cuerpo JSON (201 Created):
 - Si Gemini reporta **inconsistencias** en el array `inconsistencias` del JSON (SCRUM-169), el estado queda en **`inconsistencia_detectada`**, se persisten filas en la tabla **`inconsistencias`** (`tipo`, `descripcion`) y también existe **`extraccion_ia`** con los datos extraídos.
 - Si la extracción **falla** (archivo, API, JSON inválido…), el estado suele quedar en **`doc_incompleta`** con detalle en `documentacion_faltante`.
 
-Roles permitidos en upload: `colaborador`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin`. Un colaborador solo puede cargar para sí mismo salvo que RRHH/admin indiquen `colaborador_id` en el formulario.
+Roles permitidos en upload: `colaborador`, `recepcion`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin`. Un colaborador solo puede cargar para sí mismo; **recepción**, RRHH y admin pueden indicar `colaborador_id` en el formulario para asociar el trámite a otro titular.
+
+### Búsqueda de colaboradores (SCRUM-196 / SCRUM-197)
+
+**`GET /api/v1/colaboradores/buscar?q=<texto>&limit=10`**
+
+- Roles: `recepcion`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin`.
+- Devuelve colaboradores **activos** cuyo `nombre_completo` o `numero_documento` contiene el término (insensible a mayúsculas).
+- Pensado para el selector con autocompletado en la vista de recepción; el `id` del ítem elegido se envía luego en `POST /incapacidades/upload` como `colaborador_id`.
+
+```json
+{
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "nombre_completo": "Juan Pérez García",
+      "numero_documento": "1000000005",
+      "email": "juan.perez@nomisalud.com"
+    }
+  ]
+}
+```
 
 ### Respuesta `GET /api/v1/incapacidades`
 
@@ -175,7 +197,7 @@ Cuerpo JSON (200 OK):
 
 ### `GET /api/v1/incapacidades/{id}` (detalle)
 
-- **Roles:** `colaborador`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin` (el colaborador solo puede consultar trámites donde él es el titular `colaborador_id`).
+- **Roles:** `colaborador`, `recepcion`, `auxiliar_rrhh`, `coordinador_rrhh`, `admin` (el colaborador solo puede consultar trámites donde él es el titular `colaborador_id`).
 - **404** si el `id` no existe.
 - **403** si un colaborador intenta ver el trámite de otra persona.
 
@@ -916,7 +938,7 @@ docker compose exec api python -m scripts.seed
 
 | Orden | Script | Qué inserta |
 |-------|--------|-------------|
-| 1 | `scripts/seed.py` | **13 usuarios** de prueba (colaboradores por EPS, RRHH y admins) |
+| 1 | `scripts/seed.py` | **14 usuarios** de prueba (colaboradores por EPS, recepción, RRHH y admins) |
 | 2 | `scripts/seed_plazos_entidad.py` | **7 plazos** reglamentarios en `entidades_plazos` |
 
 No hace falta lanzar los dos archivos por separado si usas el comando de arriba.
@@ -935,11 +957,24 @@ docker compose exec api python -c "import asyncio; from scripts.seed import seed
 
 ### Usuarios de prueba (`scripts/seed.py`)
 
-Contraseña por rol: `Colaborador123!` · `AuxiliarRRHH123!` · `CoordinadorRRHH123!` · `Admin123!`
+Contraseña por rol: `Colaborador123!` · `Recepcion123!` · `AuxiliarRRHH123!` · `CoordinadorRRHH123!` · `Admin123!`
+
+### Roles del sistema (SCRUM-196)
+
+| Valor enum / JWT | Descripción breve |
+|------------------|-------------------|
+| `colaborador` | Titular de trámites; carga y consulta propios |
+| `recepcion` | Carga documentos para colaboradores elegidos (buscador + upload) |
+| `auxiliar_rrhh` | Operación RRHH, pagos, conciliación |
+| `coordinador_rrhh` | Panel coordinador, listados globales, conciliación |
+| `admin` | Plazos por entidad y administración |
+
+Documentación de contrato front: `docs/tasks/SCRUM-197.md` (recepción), `docs/tasks/SCRUM-198.md` (coordinador / KPIs).
 
 | Email | Rol | Contraseña | Notas |
 |-------|-----|------------|--------|
 | colaborador@nomisalud.com | colaborador | Colaborador123! | Perfil demo base |
+| recepcion@nomisalud.com | recepcion | Recepcion123! | Vista recepción / autocompletado |
 | juan.perez@nomisalud.com | colaborador | Colaborador123! | EPS SURA |
 | laura.martinez@nomisalud.com | colaborador | Colaborador123! | Nueva EPS |
 | pedro.gomez@nomisalud.com | colaborador | Colaborador123! | Sanitas |
