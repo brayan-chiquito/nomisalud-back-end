@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import require_roles
 from app.models.user import UserRole
-from app.schemas.token import TokenPayload
 from app.schemas.colaborador import ColaboradorBusquedaItem, ColaboradorBusquedaResponse
+from app.schemas.token import TokenPayload
 from app.services.colaborador_search_service import buscar_colaboradores
 
 router = APIRouter(prefix="/colaboradores", tags=["Colaboradores"])

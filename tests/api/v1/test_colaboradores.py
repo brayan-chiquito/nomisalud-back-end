@@ -43,6 +43,21 @@ class TestColaboradoresBuscar:
         assert len(data["items"]) == 1
         assert data["items"][0]["nombre_completo"] == "Juan Pérez"
 
+    async def test_200_query_vacia(self, client: AsyncClient):
+        token = _token(UserRole.ADMIN)
+        with patch(
+            "app.api.v1.routes.colaboradores.buscar_colaboradores",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as buscar_mock:
+            response = await client.get(
+                "/api/v1/colaboradores/buscar?q=",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+        buscar_mock.assert_awaited_once()
+
     async def test_403_colaborador(self, client: AsyncClient):
         token = _token(UserRole.COLABORADOR)
         response = await client.get(
