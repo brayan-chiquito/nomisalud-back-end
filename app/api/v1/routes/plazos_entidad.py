@@ -46,6 +46,7 @@ def _to_response(row: EntidadPlazo) -> EntidadPlazoResponse:
         unidad_limite=row.unidad_limite.value,
         dias_limite=row.dias_limite,
         dias_alerta=row.dias_alerta,
+        dias_promedio_pago=row.dias_promedio_pago,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

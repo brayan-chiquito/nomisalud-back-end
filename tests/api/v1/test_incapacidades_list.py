@@ -49,6 +49,7 @@ class TestIncapacidadesListGet:
             entidad_ciudad="Medellín",
             incapacidad_tipo_extraido="enfermedad_general",
             urgencia="verde",
+            pago_retrasado=False,
         )
 
         with patch(
@@ -81,6 +82,7 @@ class TestIncapacidadesListGet:
             "entidad_ciudad": "Medellín",
             "incapacidad_tipo_extraido": "enfermedad_general",
             "urgencia": "verde",
+            "pago_retrasado": False,
         }
         list_mock.assert_awaited_once()
         call_kw = list_mock.await_args.kwargs
@@ -141,6 +143,20 @@ class TestIncapacidadesListGet:
             )
         assert response.status_code == 200
         assert list_mock.await_args.kwargs["urgencia_filtro"] == "rojo"
+
+    async def test_filtro_pago_retrasado_pasa_al_servicio(self, client: AsyncClient):
+        token, _ = _token(UserRole.ADMIN)
+        with patch(
+            "app.api.v1.routes.incapacidades.list_incapacidades_paginated",
+            new_callable=AsyncMock,
+            return_value=([], 0),
+        ) as list_mock:
+            response = await client.get(
+                "/api/v1/incapacidades?pago_retrasado=true&estado=cobrada",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert response.status_code == 200
+        assert list_mock.await_args.kwargs["pago_retrasado"] is True
 
     async def test_401_sin_token(self, client: AsyncClient):
         response = await client.get("/api/v1/incapacidades")

@@ -52,6 +52,7 @@ class EntidadPlazo(Base):
     )
     dias_limite: Mapped[int] = mapped_column(Integer, nullable=False)
     dias_alerta: Mapped[int] = mapped_column(Integer, nullable=False)
+    dias_promedio_pago: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

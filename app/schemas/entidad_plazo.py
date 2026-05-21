@@ -27,6 +27,14 @@ class EntidadPlazoBase(BaseModel):
         ge=0,
         description="Días de anticipación antes del vencimiento para alertar",
     )
+    dias_promedio_pago: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "Días esperados para liquidar tras estado cobrada (SCRUM-193); "
+            "null usa PAGO_RETRASO_DIAS_DEFAULT"
+        ),
+    )
 
     @field_validator("entidad_nombre", "tipo_incapacidad")
     @classmethod
@@ -47,6 +55,7 @@ class EntidadPlazoUpdateRequest(BaseModel):
     valor_limite: int | None = Field(None, ge=1)
     unidad_limite: UnidadPlazoSchema | None = None
     dias_alerta: int | None = Field(None, ge=0)
+    dias_promedio_pago: int | None = Field(None, ge=1)
 
     @field_validator("entidad_nombre", "tipo_incapacidad")
     @classmethod
@@ -67,6 +76,7 @@ class EntidadPlazoResponse(BaseModel):
     unidad_limite: str
     dias_limite: int
     dias_alerta: int
+    dias_promedio_pago: int | None = None
     created_at: datetime
     updated_at: datetime
 

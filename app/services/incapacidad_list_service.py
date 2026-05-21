@@ -43,6 +43,7 @@ class IncapacidadListRow:
     entidad_ciudad: str | None
     incapacidad_tipo_extraido: str | None
     urgencia: str
+    pago_retrasado: bool
 
 
 def _build_list_row(
@@ -72,6 +73,7 @@ def _build_list_row(
             entidad_nombre=en,
             tipo_incapacidad=tipo_ext,
         ),
+        pago_retrasado=bool(inc.pago_retrasado),
     )
 
 
@@ -81,6 +83,7 @@ def _list_select_and_where(
     tipo: str | None,
     entidad: str | None,
     colaborador_id_scope: uuid.UUID | None,
+    pago_retrasado: bool | None,
 ) -> tuple[aliased, aliased, object, object, object, object, object, object, object]:
     """Arma joins y cláusula WHERE compartida por conteo y listado."""
     Colaborador = aliased(User)
@@ -89,6 +92,8 @@ def _list_select_and_where(
         conds.append(Incapacidad.colaborador_id == colaborador_id_scope)
     if estado is not None:
         conds.append(Incapacidad.estado == estado)
+    if pago_retrasado is True:
+        conds.append(Incapacidad.pago_retrasado.is_(True))
 
     tipo_norm = tipo.strip() if tipo and tipo.strip() else None
     entidad_norm = entidad.strip() if entidad and entidad.strip() else None
@@ -175,6 +180,7 @@ async def list_incapacidades_paginated(
     entidad: str | None,
     colaborador_id_scope: uuid.UUID | None,
     urgencia_filtro: str | None = None,
+    pago_retrasado: bool | None = None,
 ) -> tuple[list[IncapacidadListRow], int]:
     """
     Lista incapacidades con filtros opcionales y paginación.
@@ -204,6 +210,7 @@ async def list_incapacidades_paginated(
         tipo=tipo,
         entidad=entidad,
         colaborador_id_scope=colaborador_id_scope,
+        pago_retrasado=pago_retrasado,
     )
 
     indice_plazos = await cargar_indice_plazos(db)
@@ -225,7 +232,9 @@ async def list_incapacidades_paginated(
             item = _build_list_row(
                 inc, nom, eml, en, et, nit, ec, tipo_ext, indice_plazos=indice_plazos
             )
-            if item.urgencia == urgencia_filtro:
+            if item.urgencia == urgencia_filtro and (
+                pago_retrasado is not True or item.pago_retrasado
+            ):
                 filtradas.append(item)
         total = len(filtradas)
         offset = (page - 1) * page_size

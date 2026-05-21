@@ -120,6 +120,7 @@ async def registrar_pago_y_marcar_pagadas(
                 incapacidad_id=inc.id,
             )
         )
+        inc.pago_retrasado = False
         try:
             await aplicar_parche_estado_incapacidad(
                 db,

@@ -67,6 +67,13 @@ class IncapacidadListItem(BaseModel):
             "`verde`, `amarillo` o `rojo` (SCRUM-176/177)"
         ),
     )
+    pago_retrasado: bool = Field(
+        False,
+        description=(
+            "True si el job diario detectó retraso en liquidar tras estado "
+            "cobrada (SCRUM-193); usar para badge en panel (SCRUM-194)."
+        ),
+    )
 
 
 class IncapacidadListResponse(BaseModel):

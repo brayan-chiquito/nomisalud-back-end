@@ -1,6 +1,7 @@
 """Rutas HTTP para trámites de incapacidad."""
 
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import (
@@ -70,6 +71,19 @@ from app.services.incapacidad_verify_service import (
 from app.services.urgencia_service import parse_nivel_urgencia
 
 router = APIRouter(prefix="/incapacidades", tags=["Incapacidades"])
+
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+ListIncapacidadesUser = Annotated[
+    TokenPayload,
+    Depends(
+        require_roles(
+            UserRole.COLABORADOR,
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+]
 
 
 def _ensure_puede_cargar_para_colaborador(
@@ -183,6 +197,8 @@ def _parse_urgencia_filtro(raw: str | None) -> str | None:
     ),
 )
 async def list_incapacidades(
+    current_user: ListIncapacidadesUser,
+    db: DbSession,
     page: int = Query(1, ge=1, description="Número de página (base 1)"),
     estado: str | None = Query(None, description="Filtrar por estado del trámite"),
     tipo: str | None = Query(
@@ -198,15 +214,10 @@ async def list_incapacidades(
         None,
         description="Filtrar por nivel de urgencia calculado: verde, amarillo o rojo",
     ),
-    current_user: TokenPayload = Depends(
-        require_roles(
-            UserRole.COLABORADOR,
-            UserRole.AUXILIAR_RRHH,
-            UserRole.COORDINADOR_RRHH,
-            UserRole.ADMIN,
-        )
+    pago_retrasado: bool | None = Query(
+        None,
+        description="Si es true, solo trámites marcados con pago retrasado (SCRUM-193)",
     ),
-    db: AsyncSession = Depends(get_db),
 ) -> IncapacidadListResponse:
     estado_enum = _parse_estado_filtro(estado)
     urgencia_filtro = _parse_urgencia_filtro(urgencia)
@@ -225,6 +236,7 @@ async def list_incapacidades(
         entidad=entidad,
         colaborador_id_scope=colaborador_id_scope,
         urgencia_filtro=urgencia_filtro,
+        pago_retrasado=pago_retrasado,
     )
     items = [
         IncapacidadListItem(
@@ -244,6 +256,7 @@ async def list_incapacidades(
             entidad_ciudad=r.entidad_ciudad,
             incapacidad_tipo_extraido=r.incapacidad_tipo_extraido,
             urgencia=r.urgencia,
+            pago_retrasado=r.pago_retrasado,
         )
         for r in rows
     ]
