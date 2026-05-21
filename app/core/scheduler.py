@@ -9,6 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
+from app.services.pago_retrasado_job_service import detectar_y_marcar_pagos_retrasados
 from app.services.vencimiento_job_service import revisar_vencimientos_y_alertar
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ async def _ejecutar_job_vencimientos() -> None:
     try:
         async with AsyncSessionLocal() as db:
             resultado = await revisar_vencimientos_y_alertar(db)
+            pago_retrasado = await detectar_y_marcar_pagos_retrasados(db)
         logger.info(
             "Fin job revisión vencimientos: evaluados=%s enviados=%s "
             "duplicados_omitidos=%s verdes_omitidos=%s errores=%s",
@@ -33,6 +35,14 @@ async def _ejecutar_job_vencimientos() -> None:
         )
         if resultado.errores:
             logger.warning("Errores parciales en job: %s", resultado.errores)
+        logger.info(
+            "Fin sub-rutina pagos retrasados: evaluados=%s marcados=%s "
+            "desmarcados=%s sin_fecha_cobrada=%s",
+            pago_retrasado.evaluados,
+            pago_retrasado.marcados_retrasado,
+            pago_retrasado.desmarcados,
+            pago_retrasado.omitidos_sin_fecha_cobrada,
+        )
     except Exception:
         logger.exception("Fallo crítico en job de revisión de vencimientos")
         raise

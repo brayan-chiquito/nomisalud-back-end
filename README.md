@@ -39,7 +39,7 @@ docker compose exec api python -m scripts.seed
 | GET    | `/api/v1/health/`              | No   | Estado básico de la API |
 | GET    | `/api/v1/health/db`            | No   | Verifica conexión a PostgreSQL |
 | POST   | `/api/v1/auth/login`           | No   | Autenticación (retorna JWT) |
-| GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye `urgencia` calculada, nombre/email del colaborador y entidad desde extracción IA |
+| GET    | `/api/v1/incapacidades`        | Sí   | Listado paginado con filtros; incluye `urgencia`, `pago_retrasado` (badge SCRUM-194) y datos de extracción IA |
 | GET    | `/api/v1/incapacidades/mias`   | Sí   | Mis trámites (solo `colaborador`): filtro estricto por JWT; cada ítem incluye `estado` y `updated_at` |
 | GET    | `/api/v1/incapacidades/{id}`   | Sí   | Detalle del trámite: `extraccion_ia`, lista `inconsistencias` (hallazgos IA) y `archivo_url` |
 | GET    | `/api/v1/incapacidades/{id}/archivo` | Sí | Descarga del documento adjunto (mismo JWT que el detalle; ruta validada bajo `UPLOAD_STORAGE_DIR`) |
@@ -359,6 +359,7 @@ Parametrización de **plazos límite** y **días de alerta** según entidad pres
 | `valor_limite` + `unidad_limite` | Plazo expresado en `dias`, `meses` o `anos` |
 | `dias_limite` | Plazo convertido a días (meses × 30, años × 365) |
 | `dias_alerta` | Anticipación en días para alertar antes del vencimiento |
+| `dias_promedio_pago` | Días esperados para liquidar tras `cobrada` (SCRUM-193); `null` → `PAGO_RETRASO_DIAS_DEFAULT` |
 
 **Unicidad:** una sola fila por par `(entidad_nombre, tipo_incapacidad)`.
 
@@ -410,7 +411,25 @@ Servicio **`app/services/urgencia_service.py`**:
 | `clasificar_urgencia_desde_plazo` | Lógica pura (fecha recepción + `dias_limite` + `dias_alerta`) |
 | `cargar_indice_plazos` | Índice en memoria para el listado (evita N+1) |
 
-El **`GET /api/v1/incapacidades`** calcula `urgencia` por ítem y acepta `?urgencia=rojo` (ver sección [Respuesta GET incapacidades](#respuesta-get-apiv1incapacidades)).
+El **`GET /api/v1/incapacidades`** calcula `urgencia` por ítem, expone `pago_retrasado` (boolean) y acepta `?urgencia=rojo` y `?pago_retrasado=true` (ver sección [Respuesta GET incapacidades](#respuesta-get-apiv1incapacidades)).
+
+### Pagos retrasados — job diario (SCRUM-193)
+
+Sub-rutina integrada en el **mismo job programado** que las alertas de vencimiento (`app/core/scheduler.py`, tras `revisar_vencimientos_y_alertar`).
+
+| Componente | Ubicación |
+|------------|-----------|
+| Detección y marcado | `app/services/pago_retrasado_job_service.py` |
+| Campo en BD | `incapacidades.pago_retrasado` (boolean, indexado) |
+| Umbral por entidad | `entidades_plazos.dias_promedio_pago` (opcional) |
+
+**Regla:** trámites en estado **`cobrada`** sin fila en `pagos_incapacidades`. Se toma la fecha del historial al pasar a `cobrada`; si `(hoy - fecha_cobrada) > dias_promedio_pago` (o default), se marca `pago_retrasado=true`. Al registrar pago (`POST /pagos`) o al dejar de estar cobrada pendiente, la marca se limpia.
+
+| Variable | Descripción |
+|----------|-------------|
+| `PAGO_RETRASO_DIAS_DEFAULT` | Umbral global si la entidad no define `dias_promedio_pago` (default `30`) |
+
+**Migración:** `e9f1a2b3c4d5` (`pago_retrasado`, `dias_promedio_pago`). Rama: `feature/SCRUM-193-pago-retrasado`.
 
 ### Alertas automáticas por vencimiento (SCRUM-180 / SCRUM-181 / SCRUM-182)
 
@@ -739,6 +758,7 @@ nomisalud-back-end/
 │   │   ├── conciliacion_periodo.py         # Rango mes/año UTC
 │   │   ├── urgencia_service.py             # Cálculo semáforo verde/amarillo/rojo (SCRUM-176)
 │   │   ├── vencimiento_job_service.py      # Job revisión vencimientos (SCRUM-180)
+│   │   ├── pago_retrasado_job_service.py     # Marca pagos retrasados (SCRUM-193)
 │   │   ├── mail_service.py                 # SMTP fastapi-mail (SCRUM-181)
 │   │   ├── alerta_enviada_service.py       # Deduplicación alertas (SCRUM-182)
 │   │   ├── plazo_unidades.py               # Normalización días/meses/años

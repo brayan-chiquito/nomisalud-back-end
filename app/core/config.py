@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # Listado de pagos (SCRUM-186)
     PAGOS_PAGE_SIZE: int = 20
 
+    # Umbral de pago retrasado si la entidad no define dias_promedio_pago (SCRUM-193)
+    PAGO_RETRASO_DIAS_DEFAULT: int = 30
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

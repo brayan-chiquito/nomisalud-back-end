@@ -198,6 +198,10 @@ async def list_incapacidades(
         None,
         description="Filtrar por nivel de urgencia calculado: verde, amarillo o rojo",
     ),
+    pago_retrasado: bool | None = Query(
+        None,
+        description="Si es true, solo trámites marcados con pago retrasado (SCRUM-193)",
+    ),
     current_user: TokenPayload = Depends(
         require_roles(
             UserRole.COLABORADOR,
@@ -225,6 +229,7 @@ async def list_incapacidades(
         entidad=entidad,
         colaborador_id_scope=colaborador_id_scope,
         urgencia_filtro=urgencia_filtro,
+        pago_retrasado=pago_retrasado,
     )
     items = [
         IncapacidadListItem(
@@ -244,6 +249,7 @@ async def list_incapacidades(
             entidad_ciudad=r.entidad_ciudad,
             incapacidad_tipo_extraido=r.incapacidad_tipo_extraido,
             urgencia=r.urgencia,
+            pago_retrasado=r.pago_retrasado,
         )
         for r in rows
     ]

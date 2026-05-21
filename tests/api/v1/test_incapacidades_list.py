@@ -49,6 +49,7 @@ class TestIncapacidadesListGet:
             entidad_ciudad="Medellín",
             incapacidad_tipo_extraido="enfermedad_general",
             urgencia="verde",
+            pago_retrasado=False,
         )
 
         with patch(
@@ -81,6 +82,7 @@ class TestIncapacidadesListGet:
             "entidad_ciudad": "Medellín",
             "incapacidad_tipo_extraido": "enfermedad_general",
             "urgencia": "verde",
+            "pago_retrasado": False,
         }
         list_mock.assert_awaited_once()
         call_kw = list_mock.await_args.kwargs

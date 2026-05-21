@@ -98,6 +98,7 @@ async def create_entidad_plazo(
         unidad_limite=unidad,
         dias_limite=dias_limite,
         dias_alerta=payload.dias_alerta,
+        dias_promedio_pago=payload.dias_promedio_pago,
     )
     db.add(row)
     await db.flush()
@@ -130,6 +131,11 @@ async def update_entidad_plazo(
     dias_alerta = (
         payload.dias_alerta if payload.dias_alerta is not None else row.dias_alerta
     )
+    dias_promedio_pago = (
+        payload.dias_promedio_pago
+        if payload.dias_promedio_pago is not None
+        else row.dias_promedio_pago
+    )
 
     try:
         dias_limite = normalizar_plazo_a_dias(valor, unidad)
@@ -159,6 +165,7 @@ async def update_entidad_plazo(
     row.unidad_limite = unidad
     row.dias_limite = dias_limite
     row.dias_alerta = dias_alerta
+    row.dias_promedio_pago = dias_promedio_pago
     await db.flush()
     return row
 
