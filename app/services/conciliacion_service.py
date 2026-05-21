@@ -316,13 +316,10 @@ async def listar_entidades_con_movimiento(
 ) -> list[str]:
     """Entidades distintas con pagos o incapacidades en el periodo."""
     nombre_path = _nombre_entidad_path()
-    from_pagos = (
-        select(Pago.entidad_origen.label("entidad"))
-        .where(
-            Pago.fecha_operacion >= periodo.inicio,
-            Pago.fecha_operacion <= periodo.fin,
-            Pago.estado == PagoEstado.REGISTRADO,
-        )
+    from_pagos = select(Pago.entidad_origen.label("entidad")).where(
+        Pago.fecha_operacion >= periodo.inicio,
+        Pago.fecha_operacion <= periodo.fin,
+        Pago.estado == PagoEstado.REGISTRADO,
     )
     from_incap = (
         select(nombre_path.label("entidad"))
@@ -359,9 +356,7 @@ async def obtener_resumen_multientidad(
     resumenes: list[ConciliacionResumenEntidadItem] = []
     detalle_global: list[ConciliacionDetalleIncapacidadItem] = []
     for ent in entidades:
-        datos = await obtener_conciliacion(
-            db, entidad=ent, mes=mes, anio=anio
-        )
+        datos = await obtener_conciliacion(db, entidad=ent, mes=mes, anio=anio)
         resumenes.append(datos.resumen_entidad)
         detalle_global.extend(datos.response.detalle)
     return resumenes, detalle_global
