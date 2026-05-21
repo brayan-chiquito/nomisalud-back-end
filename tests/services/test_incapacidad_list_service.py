@@ -58,6 +58,7 @@ def _tuple_row(
 async def test_list_sin_filtros_ni_join() -> None:
     row_inc = MagicMock()
     row_inc.fecha_recepcion = datetime(2025, 1, 1, tzinfo=UTC)
+    row_inc.pago_retrasado = False
     db = _mock_db_results(total=3, list_rows=[_tuple_row(row_inc)])
     with patch(
         "app.services.incapacidad_list_service.cargar_indice_plazos",
@@ -79,7 +80,33 @@ async def test_list_sin_filtros_ni_join() -> None:
     assert rows[0].incapacidad is row_inc
     assert rows[0].colaborador_nombre == "Nombre Colab"
     assert rows[0].urgencia == "verde"
+    assert rows[0].pago_retrasado is False
     assert db.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_list_filtro_pago_retrasado() -> None:
+    row_inc = MagicMock()
+    row_inc.fecha_recepcion = datetime(2025, 1, 1, tzinfo=UTC)
+    row_inc.pago_retrasado = True
+    db = _mock_db_results(total=1, list_rows=[_tuple_row(row_inc)])
+    with patch(
+        "app.services.incapacidad_list_service.cargar_indice_plazos",
+        new_callable=AsyncMock,
+        return_value={},
+    ):
+        rows, total = await list_incapacidades_paginated(
+            db,
+            page=1,
+            page_size=10,
+            estado=None,
+            tipo=None,
+            entidad=None,
+            colaborador_id_scope=None,
+            pago_retrasado=True,
+        )
+    assert total == 1
+    assert rows[0].pago_retrasado is True
 
 
 @pytest.mark.asyncio

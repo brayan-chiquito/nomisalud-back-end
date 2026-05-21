@@ -1,6 +1,7 @@
 """Rutas HTTP para trámites de incapacidad."""
 
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import (
@@ -70,6 +71,19 @@ from app.services.incapacidad_verify_service import (
 from app.services.urgencia_service import parse_nivel_urgencia
 
 router = APIRouter(prefix="/incapacidades", tags=["Incapacidades"])
+
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+ListIncapacidadesUser = Annotated[
+    TokenPayload,
+    Depends(
+        require_roles(
+            UserRole.COLABORADOR,
+            UserRole.AUXILIAR_RRHH,
+            UserRole.COORDINADOR_RRHH,
+            UserRole.ADMIN,
+        )
+    ),
+]
 
 
 def _ensure_puede_cargar_para_colaborador(
@@ -202,15 +216,8 @@ async def list_incapacidades(
         None,
         description="Si es true, solo trámites marcados con pago retrasado (SCRUM-193)",
     ),
-    current_user: TokenPayload = Depends(
-        require_roles(
-            UserRole.COLABORADOR,
-            UserRole.AUXILIAR_RRHH,
-            UserRole.COORDINADOR_RRHH,
-            UserRole.ADMIN,
-        )
-    ),
-    db: AsyncSession = Depends(get_db),
+    current_user: ListIncapacidadesUser,
+    db: DbSession,
 ) -> IncapacidadListResponse:
     estado_enum = _parse_estado_filtro(estado)
     urgencia_filtro = _parse_urgencia_filtro(urgencia)

@@ -85,3 +85,84 @@ async def test_detectar_marca_retrasado() -> None:
     assert resultado.marcados_retrasado == 1
     assert inc.pago_retrasado is True
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_detectar_desmarca_si_ya_no_retrasado() -> None:
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    inc = MagicMock()
+    inc.pago_retrasado = True
+    fecha_cobrada = datetime(2024, 1, 19, tzinfo=UTC)
+    with (
+        patch(
+            "app.services.pago_retrasado_job_service._desmarcar_obsoletos",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service._fetch_cobradas_sin_pago",
+            new_callable=AsyncMock,
+            return_value=[(inc, "EPS", "general", fecha_cobrada)],
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service.cargar_indice_plazos",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service.get_settings",
+            return_value=Settings(PAGO_RETRASO_DIAS_DEFAULT=30),
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service.resolver_plazo_en_indice",
+            return_value=None,
+        ),
+    ):
+        resultado = await detectar_y_marcar_pagos_retrasados(
+            db,
+            fecha_evaluacion=datetime(2024, 1, 20, tzinfo=UTC),
+        )
+    assert resultado.marcados_retrasado == 0
+    assert inc.pago_retrasado is False
+
+
+@pytest.mark.asyncio
+async def test_detectar_sin_fecha_cobrada_limpia_marca() -> None:
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    inc = MagicMock()
+    inc.pago_retrasado = True
+    with (
+        patch(
+            "app.services.pago_retrasado_job_service._desmarcar_obsoletos",
+            new_callable=AsyncMock,
+            return_value=2,
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service._fetch_cobradas_sin_pago",
+            new_callable=AsyncMock,
+            return_value=[(inc, "E", "general", None)],
+        ),
+        patch(
+            "app.services.pago_retrasado_job_service.cargar_indice_plazos",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+    ):
+        resultado = await detectar_y_marcar_pagos_retrasados(db)
+    assert resultado.omitidos_sin_fecha_cobrada == 1
+    assert resultado.desmarcados == 2
+    assert inc.pago_retrasado is False
+
+
+@pytest.mark.asyncio
+async def test_desmarcar_obsoletos_retorna_rowcount() -> None:
+    from app.services.pago_retrasado_job_service import _desmarcar_obsoletos
+
+    db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.rowcount = 3
+    db.execute = AsyncMock(return_value=mock_result)
+    n = await _desmarcar_obsoletos(db)
+    assert n == 3
