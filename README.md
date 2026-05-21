@@ -48,6 +48,8 @@ docker compose exec api python -m scripts.seed
 | PUT    | `/api/v1/incapacidades/{id}/documentacion-faltante` | Sí | Registra lista de documentos faltantes y pasa a `doc_incompleta` (RRHH/admin) |
 | POST   | `/api/v1/pagos`                | Sí   | Registra un pago, vincula radicados y pasa trámites de `cobrada` → `pagada` (`auxiliar_rrhh`, `coordinador_rrhh`, `admin`) |
 | GET    | `/api/v1/pagos`                | Sí   | Lista pagos con filtros (`entidad`, fechas, `estado`) y paginación (mismos roles) |
+| GET    | `/api/v1/conciliacion`         | Sí   | Reporte de conciliación por `entidad`, `mes` y `anio` (totales, pendientes, detalle) |
+| GET    | `/api/v1/conciliacion/exportar` | Sí  | Descarga XLSX con hojas **Resumen** y **Detalle** (mismos roles que pagos) |
 | POST   | `/api/v1/incapacidades/upload` | Sí   | Carga PDF/JPG/PNG, crea trámite y encola extracción IA (Gemini 2.5 Flash) |
 | GET    | `/api/v1/admin/plazos-entidad` | Sí   | Listar plazos por entidad y tipo (solo `admin`) |
 | GET    | `/api/v1/admin/plazos-entidad/{id}` | Sí | Detalle de un plazo parametrizado (solo `admin`) |
@@ -452,6 +454,26 @@ Tablas **`pagos`** y **`pagos_incapacidades`** (pivote). Cada pago tiene **entid
 - **Migración:** `c8e9f1a2b3d4` (enum `pagoestado`, tablas `pagos` y `pagos_incapacidades`).
 - **Variables:** `PAGOS_PAGE_SIZE` (por defecto `20`, ver `.env.example`).
 
+### Conciliación financiera (SCRUM-189 / SCRUM-190)
+
+Compara lo **liquidado a colaboradores** (`pagos`) frente a trámites **cobrados** en el periodo (`historial_estados` → `cobrada`) y lista **pendientes** (estado `cobrada` sin fila en `pagos_incapacidades`). La entidad se resuelve desde `extraccion_ia.datos_extraidos.entidad.nombre` (búsqueda por subcadena, `ILIKE`).
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/v1/conciliacion` | Query **requeridos:** `entidad`, `mes` (1–12), `anio` (2000–2100). Respuesta: `total_cobrado`, `total_pagado`, `diferencia`, contadores, `pendientes[]`, `detalle[]`. |
+| `GET` | `/api/v1/conciliacion/exportar` | Query **requeridos:** `mes`, `anio`. Query opcional: `entidad` (si se omite, resumen multi-entidad). Archivo `conciliacion_YYYY_MM.xlsx` con hojas **Resumen** y **Detalle**. |
+
+| Campo | Significado |
+|-------|-------------|
+| `total_pagado` | Suma de `pagos.monto` con `entidad_origen` coincidente, `fecha_operacion` en el mes/año y `estado=registrado`. |
+| `total_cobrado` | Suma de montos de pagos vinculados a incapacidades que pasaron a **`cobrada`** en el periodo (montos de cobro externo EPS aún no modelados). |
+| `diferencia` | `total_cobrado - total_pagado`. |
+| `pendientes` | Incapacidades **`cobrada`** en el periodo, sin vínculo en `pagos_incapacidades`. |
+
+- **Roles:** `auxiliar_rrhh`, `coordinador_rrhh`, `admin` (mismo criterio que pagos hasta existir rol `contabilidad`).
+- **Dependencia:** `openpyxl` en `requirements.txt`. Tras actualizar dependencias en Docker: `docker compose build api && docker compose up -d api`.
+- **Rama:** `feature/SCRUM-189-190-conciliacion`.
+
 ### OCR con Tesseract (SCRUM-165)
 
 Dependencias Python: **`Pillow`** y **`pytesseract`** (`requirements.txt`). En Docker, el `Dockerfile` instala los paquetes de sistema **`tesseract-ocr`**, **`tesseract-ocr-eng`** y **`tesseract-ocr-spa`**.
@@ -548,6 +570,24 @@ curl -s -X POST http://localhost:8000/api/v1/pagos \
 
 # Listar con filtros (entidad, fechas ISO, estado del pago)
 curl -s "http://localhost:8000/api/v1/pagos?page=1&entidad=Nomi&estado=registrado" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### Conciliación (RRHH / admin)
+
+```bash
+# Reporte JSON por entidad y periodo
+curl -s "http://localhost:8000/api/v1/conciliacion?entidad=NomiSalud&mes=5&anio=2024" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Exportar Excel (todas las entidades con movimiento en el periodo)
+curl -s -o conciliacion_2024_05.xlsx \
+  "http://localhost:8000/api/v1/conciliacion/exportar?mes=5&anio=2024" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Exportar solo una entidad
+curl -s -o conciliacion_nomi_2024_05.xlsx \
+  "http://localhost:8000/api/v1/conciliacion/exportar?entidad=NomiSalud&mes=5&anio=2024" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -666,6 +706,7 @@ nomisalud-back-end/
 │   │           ├── health.py
 │   │           ├── incapacidades.py  # listado, detalle, archivo, verificar, patch estado, upload
 │   │           ├── pagos.py           # POST/GET pagos (SCRUM-185 / SCRUM-186)
+│   │           ├── conciliacion.py    # GET conciliación y export XLSX (SCRUM-189 / 190)
 │   │           └── plazos_entidad.py # CRUD admin plazos por entidad
 │   ├── models/
 │   │   ├── user.py
@@ -693,6 +734,9 @@ nomisalud-back-end/
 │   │   ├── incapacidad_verify_service.py   # Verificación manual RRHH (PUT verificar)
 │   │   ├── entidad_plazo_service.py        # CRUD plazos por entidad
 │   │   ├── pago_service.py                 # Registro y listado de pagos (SCRUM-185 / 186)
+│   │   ├── conciliacion_service.py         # Agregados y pendientes (SCRUM-189)
+│   │   ├── conciliacion_excel_service.py   # XLSX openpyxl (SCRUM-190)
+│   │   ├── conciliacion_periodo.py         # Rango mes/año UTC
 │   │   ├── urgencia_service.py             # Cálculo semáforo verde/amarillo/rojo (SCRUM-176)
 │   │   ├── vencimiento_job_service.py      # Job revisión vencimientos (SCRUM-180)
 │   │   ├── mail_service.py                 # SMTP fastapi-mail (SCRUM-181)
