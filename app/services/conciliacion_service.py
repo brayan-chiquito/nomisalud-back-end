@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Select, and_, exists, func, not_, select
+from sqlalchemy import Select, exists, func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -19,8 +18,8 @@ from app.models.user import User
 from app.schemas.conciliacion import (
     ConciliacionDetalleIncapacidadItem,
     ConciliacionPendienteItem,
-    ConciliacionResumenEntidadItem,
     ConciliacionResponse,
+    ConciliacionResumenEntidadItem,
 )
 from app.services.conciliacion_periodo import RangoPeriodo, rango_periodo_mes_anio
 
@@ -347,7 +346,10 @@ async def obtener_resumen_multientidad(
     *,
     mes: int,
     anio: int,
-) -> tuple[list[ConciliacionResumenEntidadItem], list[ConciliacionDetalleIncapacidadItem]]:
+) -> tuple[
+    list[ConciliacionResumenEntidadItem],
+    list[ConciliacionDetalleIncapacidadItem],
+]:
     try:
         periodo = rango_periodo_mes_anio(mes=mes, anio=anio)
     except ValueError as exc:

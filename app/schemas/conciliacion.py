@@ -55,16 +55,21 @@ class ConciliacionResponse(BaseModel):
         ...,
         description=(
             "Suma de montos pagados vinculados a incapacidades cobradas en el periodo. "
-            "Pendientes sin liquidar no aportan monto hasta integración de cobro externo."
+            "Pendientes sin liquidar no aportan monto hasta integración de cobro "
+            "externo."
         ),
     )
     total_pagado: Decimal = Field(
         ...,
-        description="Suma de pagos registrados (entidad_origen + fecha_operacion en periodo).",
+        description=(
+            "Suma de pagos registrados (entidad_origen + fecha_operacion en periodo)."
+        ),
     )
     diferencia: Decimal = Field(
         ...,
-        description="total_cobrado - total_pagado (saldo pendiente de liquidar en el periodo).",
+        description=(
+            "total_cobrado - total_pagado (saldo pendiente de liquidar en el periodo)."
+        ),
     )
     cantidad_cobrada_periodo: int = Field(
         ...,
