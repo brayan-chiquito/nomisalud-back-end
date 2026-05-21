@@ -47,7 +47,7 @@ docker compose exec api python -m scripts.seed
 | PUT    | `/api/v1/incapacidades/{id}/verificar` | Sí | Verificación humana RRHH/admin: `confirmar` o `rechazar` (actualiza extracción, estado e historial) |
 | PATCH  | `/api/v1/incapacidades/{id}/estado` | Sí | Cambio de estado con máquina de estados + `historial_estados` (solo RRHH/admin) |
 | PUT    | `/api/v1/incapacidades/{id}/documentacion-faltante` | Sí | Registra lista de documentos faltantes y pasa a `doc_incompleta` (RRHH/admin) |
-| POST   | `/api/v1/pagos`                | Sí   | Registra un pago, vincula radicados y pasa trámites de `cobrada` → `pagada` (`auxiliar_rrhh`, `coordinador_rrhh`, `admin`) |
+| POST   | `/api/v1/pagos`                | Sí   | Registra un pago, vincula radicados y pasa trámites de `cobrada` → `pagada` (`auxiliar_rrhh`, `coordinador_rrhh`, `contabilidad`, `admin`) |
 | GET    | `/api/v1/pagos`                | Sí   | Lista pagos con filtros (`entidad`, fechas, `estado`) y paginación (mismos roles) |
 | GET    | `/api/v1/conciliacion`         | Sí   | Reporte de conciliación por `entidad`, `mes` y `anio` (totales, pendientes, detalle) |
 | GET    | `/api/v1/conciliacion/exportar` | Sí  | Descarga XLSX con hojas **Resumen** y **Detalle** (mismos roles que pagos) |
@@ -588,7 +588,7 @@ Tablas **`pagos`** y **`pagos_incapacidades`** (pivote). Cada pago tiene **entid
 | `POST` | `/api/v1/pagos` | Cuerpo: `entidad_origen`, `referencia`, `monto`, `fecha_operacion` (opcional), `radicados[]`. Solo trámites en estado **`cobrada`** pasan a **`pagada`**; se escribe **`historial_estados`** por cada uno. |
 | `GET` | `/api/v1/pagos` | Query: `page`, `entidad` (subcadena), `fecha_desde`, `fecha_hasta`, `estado`. Respuesta: `items`, `total`, `pages`, `page`. |
 
-- **Roles:** `auxiliar_rrhh`, `coordinador_rrhh`, `admin`.
+- **Roles:** `auxiliar_rrhh`, `coordinador_rrhh`, `contabilidad`, `admin`.
 - **Migración:** `c8e9f1a2b3d4` (enum `pagoestado`, tablas `pagos` y `pagos_incapacidades`).
 - **Variables:** `PAGOS_PAGE_SIZE` (por defecto `20`, ver `.env.example`).
 
@@ -608,9 +608,25 @@ Compara lo **liquidado a colaboradores** (`pagos`) frente a trámites **cobrados
 | `diferencia` | `total_cobrado - total_pagado`. |
 | `pendientes` | Incapacidades **`cobrada`** en el periodo, sin vínculo en `pagos_incapacidades`. |
 
-- **Roles:** `auxiliar_rrhh`, `coordinador_rrhh`, `admin` (mismo criterio que pagos hasta existir rol `contabilidad`).
+- **Roles:** `auxiliar_rrhh`, `coordinador_rrhh`, `contabilidad`, `admin`.
 - **Dependencia:** `openpyxl` en `requirements.txt`. Tras actualizar dependencias en Docker: `docker compose build api && docker compose up -d api`.
 - **Rama:** `feature/SCRUM-189-190-conciliacion`.
+
+### Rol contabilidad y restricciones (SCRUM-200)
+
+El rol **`contabilidad`** accede **solo** al módulo financiero (`/api/v1/pagos`, `/api/v1/conciliacion`). Un **middleware** (`ContabilidadRestrictionMiddleware`) devuelve **403** si ese rol llama rutas de documentos o IA:
+
+- `/api/v1/incapacidades` (listado, detalle, upload, verificación, estados, archivos, etc.)
+- `/api/v1/colaboradores` (búsqueda para recepción)
+
+Peticiones sin token o con otros roles no son bloqueadas por el middleware (la ruta aplica su propio `require_roles`).
+
+| Elemento | Detalle |
+|----------|---------|
+| Enum | `UserRole.CONTABILIDAD` → `contabilidad` |
+| Migración | `a2b3c4d5e6f7_scrum_200_userrole_contabilidad.py` |
+| Seed | `contabilidad@nomisalud.com` / `Contabilidad123!` |
+| Contrato front | `docs/tasks/SCRUM-201.md` |
 
 ### OCR con Tesseract (SCRUM-165)
 
@@ -938,7 +954,7 @@ docker compose exec api python -m scripts.seed
 
 | Orden | Script | Qué inserta |
 |-------|--------|-------------|
-| 1 | `scripts/seed.py` | **14 usuarios** de prueba (colaboradores por EPS, recepción, RRHH y admins) |
+| 1 | `scripts/seed.py` | **15 usuarios** de prueba (colaboradores por EPS, recepción, RRHH, contabilidad y admins) |
 | 2 | `scripts/seed_plazos_entidad.py` | **7 plazos** reglamentarios en `entidades_plazos` |
 
 No hace falta lanzar los dos archivos por separado si usas el comando de arriba.
@@ -957,9 +973,9 @@ docker compose exec api python -c "import asyncio; from scripts.seed import seed
 
 ### Usuarios de prueba (`scripts/seed.py`)
 
-Contraseña por rol: `Colaborador123!` · `Recepcion123!` · `AuxiliarRRHH123!` · `CoordinadorRRHH123!` · `Admin123!`
+Contraseña por rol: `Colaborador123!` · `Recepcion123!` · `AuxiliarRRHH123!` · `CoordinadorRRHH123!` · `Contabilidad123!` · `Admin123!`
 
-### Roles del sistema (SCRUM-196)
+### Roles del sistema (SCRUM-196 / SCRUM-200)
 
 | Valor enum / JWT | Descripción breve |
 |------------------|-------------------|
@@ -967,9 +983,10 @@ Contraseña por rol: `Colaborador123!` · `Recepcion123!` · `AuxiliarRRHH123!` 
 | `recepcion` | Carga documentos para colaboradores elegidos (buscador + upload) |
 | `auxiliar_rrhh` | Operación RRHH, pagos, conciliación |
 | `coordinador_rrhh` | Panel coordinador, listados globales, conciliación |
+| `contabilidad` | Solo pagos y conciliación (middleware bloquea incapacidades/IA) |
 | `admin` | Plazos por entidad y administración |
 
-Documentación de contrato front: `docs/tasks/SCRUM-197.md` (recepción), `docs/tasks/SCRUM-198.md` (coordinador / KPIs).
+Documentación de contrato front: `docs/tasks/SCRUM-197.md` (recepción), `docs/tasks/SCRUM-198.md` (coordinador / KPIs), `docs/tasks/SCRUM-201.md` (contabilidad).
 
 | Email | Rol | Contraseña | Notas |
 |-------|-----|------------|--------|
@@ -985,6 +1002,7 @@ Documentación de contrato front: `docs/tasks/SCRUM-197.md` (recepción), `docs/
 | auxiliar2.rrhh@nomisalud.com | auxiliar_rrhh | AuxiliarRRHH123! | |
 | coordinador.rrhh@nomisalud.com | coordinador_rrhh | CoordinadorRRHH123! | |
 | coordinador2.rrhh@nomisalud.com | coordinador_rrhh | CoordinadorRRHH123! | |
+| contabilidad@nomisalud.com | contabilidad | Contabilidad123! | Vista financiera (pagos + conciliación) |
 | admin@nomisalud.com | admin | Admin123! | Panel plazos y administración |
 | admin.soporte@nomisalud.com | admin | Admin123! | Segundo admin de prueba |
 

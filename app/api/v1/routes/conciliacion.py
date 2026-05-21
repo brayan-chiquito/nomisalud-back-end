@@ -30,6 +30,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 _ROLES_CONCILIACION = (
     UserRole.AUXILIAR_RRHH,
     UserRole.COORDINADOR_RRHH,
+    UserRole.CONTABILIDAD,
     UserRole.ADMIN,
 )
 

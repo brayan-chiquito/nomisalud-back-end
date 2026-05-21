@@ -6,8 +6,8 @@ from app.models.user import User, UserRole
 
 
 class TestUserRole:
-    def test_has_five_roles(self):
-        assert len(UserRole) == 5
+    def test_has_six_roles(self):
+        assert len(UserRole) == 6
 
     def test_colaborador_value(self):
         assert UserRole.COLABORADOR == "colaborador"
@@ -20,6 +20,9 @@ class TestUserRole:
 
     def test_coordinador_rrhh_value(self):
         assert UserRole.COORDINADOR_RRHH == "coordinador_rrhh"
+
+    def test_contabilidad_value(self):
+        assert UserRole.CONTABILIDAD == "contabilidad"
 
     def test_admin_value(self):
         assert UserRole.ADMIN == "admin"
@@ -35,6 +38,7 @@ class TestUserRole:
             "recepcion",
             "auxiliar_rrhh",
             "coordinador_rrhh",
+            "contabilidad",
             "admin",
         }
         actual = {role.value for role in UserRole}

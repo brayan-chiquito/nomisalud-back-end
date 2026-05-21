@@ -71,6 +71,18 @@ SEED_USERS: list[dict] = [
         "arl_afiliacion": "ARL Riesgos Demo",
     },
     {
+        "email": "contabilidad@nomisalud.com",
+        "password": "Contabilidad123!",
+        "role": UserRole.CONTABILIDAD,
+        "nombre_completo": "Beatriz Contabilidad Demo",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000015",
+        "area": "Contabilidad",
+        "cargo": "Analista contable",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
+    },
+    {
         "email": "admin@nomisalud.com",
         "password": "Admin123!",
         "role": UserRole.ADMIN,
