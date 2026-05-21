@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.extraccion_ia import ExtraccionIA
     from app.models.historial_estado import HistorialEstado
     from app.models.incapacidad import Incapacidad
+    from app.models.pago import Pago
 
 
 class UserRole(str, enum.Enum):
@@ -98,6 +99,10 @@ class User(Base):
     )
     historial_estados: Mapped[list[HistorialEstado]] = relationship(
         "HistorialEstado",
+        back_populates="usuario",
+    )
+    pagos: Mapped[list[Pago]] = relationship(
+        "Pago",
         back_populates="usuario",
     )
 
