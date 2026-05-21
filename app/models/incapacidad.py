@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from app.models.extraccion_ia import ExtraccionIA
     from app.models.historial_estado import HistorialEstado
     from app.models.inconsistencia import Inconsistencia
+    from app.models.pago_incapacidad import PagoIncapacidad
     from app.models.user import User
 
 
@@ -128,6 +129,11 @@ class Incapacidad(Base):
     )
     alertas_enviadas: Mapped[list[AlertaEnviada]] = relationship(
         "AlertaEnviada",
+        back_populates="incapacidad",
+        cascade="all, delete-orphan",
+    )
+    pagos_vinculos: Mapped[list[PagoIncapacidad]] = relationship(
+        "PagoIncapacidad",
         back_populates="incapacidad",
         cascade="all, delete-orphan",
     )

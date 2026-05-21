@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # Deduplicación de alertas (SCRUM-182)
     ALERTAS_DEDUP_DIAS: int = 7
 
+    # Listado de pagos (SCRUM-186)
+    PAGOS_PAGE_SIZE: int = 20
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
