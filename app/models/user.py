@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 class UserRole(str, enum.Enum):
     COLABORADOR = "colaborador"
+    RECEPCION = "recepcion"
     AUXILIAR_RRHH = "auxiliar_rrhh"
     COORDINADOR_RRHH = "coordinador_rrhh"
     ADMIN = "admin"

@@ -35,6 +35,18 @@ SEED_USERS: list[dict] = [
         "arl_afiliacion": "ARL Riesgos Demo",
     },
     {
+        "email": "recepcion@nomisalud.com",
+        "password": "Recepcion123!",
+        "role": UserRole.RECEPCION,
+        "nombre_completo": "Rosa Recepción Demo",
+        "tipo_documento": TipoDocumento.CC,
+        "numero_documento": "1000000014",
+        "area": "Recepción",
+        "cargo": "Recepcionista",
+        "eps_afiliacion": "EPS Salud Demo",
+        "arl_afiliacion": "ARL Riesgos Demo",
+    },
+    {
         "email": "auxiliar.rrhh@nomisalud.com",
         "password": "AuxiliarRRHH123!",
         "role": UserRole.AUXILIAR_RRHH,

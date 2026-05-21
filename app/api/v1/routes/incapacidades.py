@@ -78,6 +78,7 @@ ListIncapacidadesUser = Annotated[
     Depends(
         require_roles(
             UserRole.COLABORADOR,
+            UserRole.RECEPCION,
             UserRole.AUXILIAR_RRHH,
             UserRole.COORDINADOR_RRHH,
             UserRole.ADMIN,
@@ -96,6 +97,7 @@ def _ensure_puede_cargar_para_colaborador(
         return
     role = UserRole(actor.role)
     if role in (
+        UserRole.RECEPCION,
         UserRole.AUXILIAR_RRHH,
         UserRole.COORDINADOR_RRHH,
         UserRole.ADMIN,
@@ -579,6 +581,7 @@ async def upload_incapacidad_documento(
     current_user: TokenPayload = Depends(
         require_roles(
             UserRole.COLABORADOR,
+            UserRole.RECEPCION,
             UserRole.AUXILIAR_RRHH,
             UserRole.COORDINADOR_RRHH,
             UserRole.ADMIN,

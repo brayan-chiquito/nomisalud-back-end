@@ -6,11 +6,14 @@ from app.models.user import User, UserRole
 
 
 class TestUserRole:
-    def test_has_four_roles(self):
-        assert len(UserRole) == 4
+    def test_has_five_roles(self):
+        assert len(UserRole) == 5
 
     def test_colaborador_value(self):
         assert UserRole.COLABORADOR == "colaborador"
+
+    def test_recepcion_value(self):
+        assert UserRole.RECEPCION == "recepcion"
 
     def test_auxiliar_rrhh_value(self):
         assert UserRole.AUXILIAR_RRHH == "auxiliar_rrhh"
@@ -27,7 +30,13 @@ class TestUserRole:
             assert isinstance(role, str)
 
     def test_all_expected_roles_exist(self):
-        expected = {"colaborador", "auxiliar_rrhh", "coordinador_rrhh", "admin"}
+        expected = {
+            "colaborador",
+            "recepcion",
+            "auxiliar_rrhh",
+            "coordinador_rrhh",
+            "admin",
+        }
         actual = {role.value for role in UserRole}
         assert actual == expected
 

@@ -176,6 +176,45 @@ class TestIncapacidadUploadAuthz:
         call_kw = reg.await_args.kwargs
         assert call_kw["colaborador_id"] == colab
 
+    async def test_201_recepcion_puede_indicar_otro_colaborador(
+        self, client: AsyncClient
+    ):
+        token, cargador = _token(UserRole.RECEPCION)
+        colab = uuid.uuid4()
+        row = MagicMock(spec=Incapacidad)
+        row.id = uuid.uuid4()
+        row.radicado = "INBBBBBBBBBBBBBBBB"
+        row.estado = IncapacidadEstado.RECIBIDA
+        row.archivo_path = "/x/c.pdf"
+        row.cargado_por = cargador
+
+        with (
+            patch(
+                "app.api.v1.routes.incapacidades.register_incapacidad_upload",
+                new_callable=AsyncMock,
+                return_value=row,
+            ) as reg,
+            patch(
+                "app.api.v1.routes.incapacidades.run_incapacidad_extraction_job",
+            ),
+        ):
+            response = await client.post(
+                "/api/v1/incapacidades/upload",
+                headers={"Authorization": f"Bearer {token}"},
+                data={"colaborador_id": str(colab)},
+                files={
+                    "archivo": (
+                        "a.pdf",
+                        BytesIO(b"%PDF-1.4"),
+                        "application/pdf",
+                    )
+                },
+            )
+
+        assert response.status_code == 201
+        reg.assert_awaited_once()
+        assert reg.await_args.kwargs["colaborador_id"] == colab
+
 
 @pytest.mark.asyncio
 class TestIncapacidadUploadValidation:
