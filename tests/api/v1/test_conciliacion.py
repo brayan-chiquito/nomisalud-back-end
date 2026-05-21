@@ -27,6 +27,33 @@ def _token(role: UserRole) -> str:
 
 @pytest.mark.asyncio
 class TestConciliacionApi:
+    async def test_get_200_contabilidad(self, client: AsyncClient):
+        token = _token(UserRole.CONTABILIDAD)
+        resp = ConciliacionResponse(
+            entidad="Nomi",
+            mes=5,
+            anio=2024,
+            total_cobrado=Decimal("50"),
+            total_pagado=Decimal("50"),
+            diferencia=Decimal("0"),
+            cantidad_cobrada_periodo=1,
+            cantidad_pendiente_pago=0,
+            pendientes=[],
+            detalle=[],
+        )
+        datos = _DatosConciliacion(response=resp, resumen_entidad=None)
+        with patch(
+            "app.api.v1.routes.conciliacion.obtener_conciliacion",
+            new_callable=AsyncMock,
+            return_value=datos,
+        ):
+            r = await client.get(
+                "/api/v1/conciliacion",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"entidad": "Nomi", "mes": 5, "anio": 2024},
+            )
+        assert r.status_code == 200
+
     async def test_get_403_colaborador(self, client: AsyncClient):
         token = _token(UserRole.COLABORADOR)
         r = await client.get(

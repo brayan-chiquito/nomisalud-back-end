@@ -92,3 +92,26 @@ class TestPagosApi:
         assert body["total"] == 1
         assert len(body["items"]) == 1
         assert body["items"][0]["incapacidades_vinculadas"] == 2
+
+    async def test_get_200_contabilidad(self, client: AsyncClient):
+        token = _token(UserRole.CONTABILIDAD)
+        p = MagicMock(spec=Pago)
+        p.id = uuid.uuid4()
+        p.entidad_origen = "E"
+        p.referencia = "R"
+        p.monto = Decimal("1.00")
+        from datetime import datetime
+
+        p.fecha_operacion = datetime.now()
+        p.estado = PagoEstado.REGISTRADO
+        p.user_id = uuid.uuid4()
+        with patch(
+            "app.api.v1.routes.pagos.listar_pagos_paginado",
+            new_callable=AsyncMock,
+            return_value=([(p, 0)], 0),
+        ):
+            r = await client.get(
+                "/api/v1/pagos?page=1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert r.status_code == 200

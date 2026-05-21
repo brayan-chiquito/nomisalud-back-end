@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.core.contabilidad_middleware import ContabilidadRestrictionMiddleware
 from app.core.scheduler import detener_scheduler, iniciar_scheduler
 
 settings = get_settings()
@@ -38,6 +39,7 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.add_middleware(ContabilidadRestrictionMiddleware)
 
     application.include_router(api_router)
 

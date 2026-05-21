@@ -23,6 +23,7 @@ class UserRole(str, enum.Enum):
     RECEPCION = "recepcion"
     AUXILIAR_RRHH = "auxiliar_rrhh"
     COORDINADOR_RRHH = "coordinador_rrhh"
+    CONTABILIDAD = "contabilidad"
     ADMIN = "admin"
 
 
