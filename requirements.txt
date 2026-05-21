@@ -19,6 +19,9 @@ python-multipart==0.0.20
 # HTTP client (para llamadas externas futuras)
 httpx==0.28.1
 
+# Exportación conciliación (SCRUM-190)
+openpyxl==3.1.5
+
 # Tareas programadas y correo (SCRUM-180 / SCRUM-181)
 APScheduler==3.10.4
 fastapi-mail==1.4.2
