@@ -14,3 +14,8 @@ def test_rango_febrero_bisiesto():
 def test_mes_invalido():
     with pytest.raises(ValueError, match="mes"):
         rango_periodo_mes_anio(mes=13, anio=2024)
+
+
+def test_anio_invalido():
+    with pytest.raises(ValueError, match="anio"):
+        rango_periodo_mes_anio(mes=1, anio=1999)

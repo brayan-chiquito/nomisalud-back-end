@@ -40,7 +40,6 @@ def _nombre_archivo_export(mes: int, anio: int) -> str:
 
 @router.get(
     "",
-    response_model=ConciliacionResponse,
     summary="Reporte de conciliación por entidad y periodo",
 )
 async def consultar_conciliacion(

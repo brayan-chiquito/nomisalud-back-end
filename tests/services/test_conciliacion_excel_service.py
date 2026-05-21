@@ -44,3 +44,10 @@ def test_generar_xlsx_hojas_resumen_y_detalle():
     assert wb.sheetnames == ["Resumen", "Detalle"]
     assert wb["Resumen"]["A2"].value == "NomiSalud"
     assert wb["Detalle"]["A2"].value == "IN01"
+
+
+def test_generar_xlsx_vacio():
+    data = generar_xlsx_conciliacion(resumenes=[], detalle=[])
+    wb = load_workbook(filename=BytesIO(data))
+    assert wb["Resumen"]["A1"].value == "Entidad"
+    assert wb["Detalle"].max_row == 1

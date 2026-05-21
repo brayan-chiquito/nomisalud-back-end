@@ -135,7 +135,7 @@ def _stmt_pendientes(
 ) -> Select:
     nombre_path = _nombre_entidad_path()
     tipo_path = _tipo_incapacidad_path()
-    Colaborador = aliased(User)
+    colaborador_user = aliased(User)
     tiene_pago = (
         select(PagoIncapacidad.incapacidad_id)
         .where(PagoIncapacidad.incapacidad_id == Incapacidad.id)
@@ -163,13 +163,13 @@ def _stmt_pendientes(
     return (
         select(
             Incapacidad,
-            Colaborador.nombre_completo,
+            colaborador_user.nombre_completo,
             nombre_path,
             tipo_path,
             fecha_cobrada_sq,
         )
         .select_from(Incapacidad)
-        .join(Colaborador, Colaborador.id == Incapacidad.colaborador_id)
+        .join(colaborador_user, colaborador_user.id == Incapacidad.colaborador_id)
         .outerjoin(ExtraccionIA, ExtraccionIA.incapacidad_id == Incapacidad.id)
         .where(
             Incapacidad.estado == IncapacidadEstado.COBRADA,
@@ -212,11 +212,11 @@ async def _listar_detalle_periodo(
 ) -> list[ConciliacionDetalleIncapacidadItem]:
     nombre_path = _nombre_entidad_path()
     tipo_path = _tipo_incapacidad_path()
-    Colaborador = aliased(User)
+    colaborador_user = aliased(User)
     stmt = (
         select(
             Incapacidad,
-            Colaborador.nombre_completo,
+            colaborador_user.nombre_completo,
             nombre_path,
             tipo_path,
             Pago.monto,
@@ -224,7 +224,7 @@ async def _listar_detalle_periodo(
             PagoIncapacidad.incapacidad_id,
         )
         .select_from(Incapacidad)
-        .join(Colaborador, Colaborador.id == Incapacidad.colaborador_id)
+        .join(colaborador_user, colaborador_user.id == Incapacidad.colaborador_id)
         .outerjoin(ExtraccionIA, ExtraccionIA.incapacidad_id == Incapacidad.id)
         .outerjoin(
             PagoIncapacidad,
